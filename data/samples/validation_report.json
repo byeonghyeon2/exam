@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0.0",
+  "validated_at": "2026-08-06T00:00:00Z",
+  "status": "valid",
+  "total_questions": 2,
+  "valid_questions": 2,
+  "invalid_questions": 0,
+  "duplicate_question_ids": [],
+  "duplicate_content_hashes": [],
+  "errors": [],
+  "warnings": ["COF-C02 official exam settings require administrator review."],
+  "note": "Repository sample data is synthetic and not copied from a real exam."
+}

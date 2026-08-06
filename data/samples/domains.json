@@ -1,0 +1,4 @@
+[
+  {"certification_code":"DEA-C01","domain_code":"DEA-D1","name_en":"Data Ingestion and Transformation","name_ko":"데이터 수집 및 변환","exam_weight":34,"sort_order":1,"is_active":true},
+  {"certification_code":"COF-C02","domain_code":"COF-D1","name_en":"Snowflake AI Data Cloud Features and Architecture","name_ko":"Snowflake AI Data Cloud 기능 및 아키텍처","exam_weight":24,"sort_order":1,"is_active":true}
+]

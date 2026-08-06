@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/question.schema.json",
+  "title": "Certification exam question",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["question_id","certification_code","domain_code","question_type","question_en","question_ko","choices","provided_answers","verified_answers","final_answers","required_answer_count","verification_status","verification_confidence","difficulty","tags","asset_refs","is_active"],
+  "properties": {
+    "question_id": {"type":"string","minLength":1,"maxLength":100},
+    "certification_code": {"type":"string","minLength":1,"maxLength":50},
+    "domain_code": {"type":"string","minLength":1,"maxLength":50},
+    "question_type": {"enum":["multiple_choice","multiple_response"]},
+    "question_en": {"type":"string","minLength":1},
+    "question_ko": {"type":"string","minLength":1},
+    "choices": {"type":"array","minItems":2,"items":{"type":"object","additionalProperties":false,"required":["id","text_en","text_ko"],"properties":{"id":{"type":"string","pattern":"^[A-Z]$"},"text_en":{"type":"string","minLength":1},"text_ko":{"type":"string","minLength":1}}}},
+    "provided_answers": {"$ref":"#/$defs/answers"},
+    "verified_answers": {"$ref":"#/$defs/answers"},
+    "final_answers": {"$ref":"#/$defs/answers"},
+    "required_answer_count": {"type":"integer","minimum":1},
+    "verification_status": {"enum":["unverified","verified","conflict","needs_review"]},
+    "verification_confidence": {"type":"number","minimum":0,"maximum":1},
+    "verification_reason": {"type":["string","null"]},
+    "difficulty": {"enum":["easy","medium","hard","unknown"]},
+    "tags": {"type":"array","items":{"type":"string"},"uniqueItems":true},
+    "asset_refs": {"type":"array","items":{"type":"string"},"uniqueItems":true},
+    "source_page": {"type":["integer","null"],"minimum":1},
+    "is_active": {"type":"boolean"}
+  },
+  "$defs": {"answers":{"type":"array","items":{"type":"string","pattern":"^[A-Z]$"},"uniqueItems":true}}
+}

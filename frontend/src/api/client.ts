@@ -1,0 +1,4 @@
+const BASE=(import.meta.env.VITE_API_BASE_URL as string|undefined)??'http://localhost:8000/api/v1';
+export class ApiError extends Error { constructor(message:string,readonly status:number,readonly detail?:unknown){super(message)} }
+export async function api<T>(path:string,init?:RequestInit):Promise<T>{const res=await fetch(`${BASE}${path}`,{...init,headers:{'Content-Type':'application/json',...init?.headers}});const body:unknown=await res.json().catch(()=>null);if(!res.ok){const msg=typeof body==='object'&&body!==null&&'detail'in body?String(body.detail):'요청을 처리하지 못했습니다.';throw new ApiError(msg,res.status,body)}return body as T}
+export const adminHeaders=(key:string):HeadersInit=>key?{'X-Admin-Key':key}:{};

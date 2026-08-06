@@ -1,0 +1,4 @@
+[
+  {"certification_code":"DEA-C01","name_en":"AWS Certified Data Engineer - Associate","name_ko":"AWS 공인 데이터 엔지니어 - 어소시에이트","exam_version":"DEA-C01","default_question_count":65,"default_duration_minutes":130,"passing_score":720,"score_type":"scaled","official_reference_url":"https://aws.amazon.com/certification/certified-data-engineer-associate/","official_verified_at":"2026-08-06T00:00:00Z","is_active":true},
+  {"certification_code":"COF-C02","name_en":"SnowPro Core Certification","name_ko":"SnowPro Core 자격증","exam_version":"COF-C02","default_question_count":100,"default_duration_minutes":115,"passing_score":750,"score_type":"scaled","official_reference_url":"https://learn.snowflake.com/en/certifications/snowpro-core/","official_verified_at":null,"is_active":true,"needs_official_review":true}
+]

@@ -1,0 +1,13 @@
+{
+  "dataset_version": "1.0.0",
+  "schema_version": "1.0.0",
+  "generated_at": "2026-08-06T00:00:00Z",
+  "question_count": 2,
+  "certifications": ["DEA-C01", "COF-C02"],
+  "files": {
+    "certifications": "certifications.json",
+    "domains": "domains.json",
+    "questions": "questions.jsonl",
+    "validation_report": "validation_report.json"
+  }
+}
