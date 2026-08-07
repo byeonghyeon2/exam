@@ -141,7 +141,10 @@ class MockExam(Base):
 
 class MockExamQuestion(Base):
     __tablename__ = "mock_exam_questions"
-    __table_args__ = (UniqueConstraint("mock_exam_id", "question_id"), UniqueConstraint("mock_exam_id", "question_order"))
+    __table_args__ = (
+        UniqueConstraint("mock_exam_id", "question_id", name="uq_mock_exam_question_question"),
+        UniqueConstraint("mock_exam_id", "question_order", name="uq_mock_exam_question_order"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     mock_exam_id: Mapped[int] = mapped_column(ForeignKey("mock_exams.id"), index=True)
     question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)

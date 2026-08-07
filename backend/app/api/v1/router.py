@@ -78,8 +78,10 @@ def create_study(payload: StudySessionCreate, db: Db) -> StudySessionOut:
     if payload.domain_code and not domain: raise HTTPException(404, "Domain not found")
     pool = repo.eligible_questions(cert.id, domain.id if domain else None)
     rng = random.Random(payload.seed); rng.shuffle(pool)
-    if len(pool) < payload.question_count: raise HTTPException(409, "Insufficient verified questions")
-    session_id = str(uuid4()); ids = [q.id for q in pool[:payload.question_count]]; _study_sessions[session_id] = ids
+    question_count = len(pool) if payload.question_count is None else payload.question_count
+    if not pool: raise HTTPException(409, "No eligible questions in the selected domain")
+    if len(pool) < question_count: raise HTTPException(409, "Insufficient verified questions")
+    session_id = str(uuid4()); ids = [q.id for q in pool[:question_count]]; _study_sessions[session_id] = ids
     return StudySessionOut(id=session_id, question_ids=ids)
 
 
@@ -200,11 +202,26 @@ def review_question(exam_id: int, question_id: int, db: Db) -> dict[str, Any]:
     return {"question": QuestionOut.model_validate(get_question(db, question_id)), "selected_answers": item.selected_answers_json or [], "correct_answers": current_answers(get_question(db, question_id)), "is_correct": item.is_correct}
 
 
-@router.get("/wrong-notes", response_model=None)
-def wrong_notes(db: Db, status_filter: str | None = Query(None, alias="status")) -> list[WrongNote]:
-    stmt = select(WrongNote).order_by(WrongNote.last_wrong_at.desc())
+@router.get("/wrong-notes", response_model=list[WrongNoteOut])
+def wrong_notes(db: Db, status_filter: str | None = Query(None, alias="status")) -> list[WrongNoteOut]:
+    stmt = select(WrongNote, Question).join(Question, Question.id == WrongNote.question_id).order_by(WrongNote.last_wrong_at.desc())
     if status_filter: stmt = stmt.where(WrongNote.status == status_filter)
-    return list(db.scalars(stmt))
+    return [WrongNoteOut(
+        question_id=note.question_id,
+        question_uid=question.question_uid,
+        question_ko=question.question_ko,
+        wrong_count=note.wrong_count,
+        status=note.status,
+        last_wrong_at=note.last_wrong_at,
+    ) for note, question in db.execute(stmt)]
+
+
+@router.delete("/wrong-notes")
+def delete_wrong_notes(payload: WrongNoteDelete, db: Db) -> dict[str, int]:
+    notes = list(db.scalars(select(WrongNote).where(WrongNote.question_id.in_(set(payload.question_ids)))))
+    for note in notes: db.delete(note)
+    db.commit()
+    return {"deleted_count": len(notes)}
 
 
 @router.post("/wrong-notes/{question_id}/review")

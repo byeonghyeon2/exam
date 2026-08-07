@@ -1,6 +1,7 @@
 from functools import lru_cache
+from urllib.parse import quote_plus
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,11 @@ class Settings(BaseSettings):
     app_port: int = 8000
     app_debug: bool = False
     database_url: str = "sqlite:///./cert_exam.db"
+    database_host: str = ""
+    database_port: int = 3306
+    database_name: str = ""
+    database_user: str = ""
+    database_password: str = ""
     frontend_origin: str = "http://localhost:5173"
     admin_access_key: str = ""
     openai_api_key: str = ""
@@ -24,8 +30,19 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     timezone: str = "Asia/Seoul"
 
+    @model_validator(mode="after")
+    def assemble_database_url(self) -> "Settings":
+        """Prefer explicit DB fields so credentials do not need duplicating in DATABASE_URL."""
+        if all((self.database_host, self.database_name, self.database_user, self.database_password)):
+            user = quote_plus(self.database_user)
+            password = quote_plus(self.database_password)
+            self.database_url = (
+                f"mysql+pymysql://{user}:{password}@{self.database_host}:"
+                f"{self.database_port}/{self.database_name}?charset=utf8mb4"
+            )
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

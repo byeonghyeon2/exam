@@ -1,3 +1,121 @@
-import {useMutation,useQuery} from '@tanstack/react-query';import {useEffect,useState} from 'react';import {useLocation,useNavigate,useParams} from 'react-router-dom';import {endpoints} from '../api/queries';import type {Question,Submission} from '../types';import {ErrorState,Loading,PageHeader,Progress} from '../components/common';
-export function Study(){const {id}=useParams();const loc=useLocation();const nav=useNavigate();const cert=new URLSearchParams(loc.search).get('cert')??'DEA-C01';const create=useMutation({mutationFn:()=>endpoints.createStudy({certification_code:cert,mode:'random',question_count:1}),onSuccess:s=>nav(`/study/${s.id}`,{replace:true})});const {mutate:createSession,isPending:createPending,data:createData}=create;useEffect(()=>{if(!id&&!createPending&&!createData)createSession()},[id,createPending,createData,createSession]);const session=useQuery({queryKey:['study',id],queryFn:()=>endpoints.study(id!),enabled:Boolean(id)});if(!id)return create.isError?<ErrorState error={create.error} retry={()=>createSession()}/>:<Loading label="학습 세션을 준비하는 중"/>;if(session.isLoading)return <Loading/>;if(session.isError)return <ErrorState error={session.error}/>;return <QuestionView question={session.data!.question} sessionId={id} session={session.data!}/>}
-function QuestionView({question,sessionId,session}:{question?:Question;sessionId:string;session:{current_index:number;total_questions:number}}){const [selected,setSelected]=useState<string[]>([]);const [result,setResult]=useState<Submission>();const submit=useMutation({mutationFn:()=>endpoints.submitStudy(question!.id,sessionId,{selected_answers:selected}),onSuccess:setResult});if(!question)return <div className="state"><strong>학습을 완료했습니다</strong><span>오늘의 학습 기록이 저장되었습니다.</span></div>;const multi=question.question_type==='multiple_response';const choose=(id:string)=>setSelected(s=>multi?(s.includes(id)?s.filter(x=>x!==id):s.length<question.required_answer_count?[...s,id]:s):[id]);return <><PageHeader eyebrow="집중 학습" title={`${session.current_index+1} / ${session.total_questions}`} action={<span className="badge">{multi?`${question.required_answer_count}개 선택`:'1개 선택'}</span>}/><Progress label="학습 진도" value={(session.current_index/session.total_questions)*100}/><section className="question"><p className="question-en">{question.question_en}</p><h2>{question.question_ko}</h2><fieldset disabled={Boolean(result)}><legend className="sr-only">답안 선택</legend>{question.choices.map(c=>{const checked=selected.includes(c.id);const correct=result?.correct_answers.includes(c.id);return <label key={c.id} className={`choice ${checked?'selected':''} ${correct?'correct':''} ${result&&checked&&!correct?'incorrect':''}`}><input type={multi?'checkbox':'radio'} name="answer" checked={checked} onChange={()=>choose(c.id)}/><b>{c.id}</b><span>{c.text_ko}<small>{c.text_en}</small></span></label>})}</fieldset>{result&&<div className={result.is_correct?'feedback success':'feedback danger'} role="status"><b>{result.is_correct?'정답입니다!':'아쉬워요. 다시 기억해 두세요.'}</b><p>{result.explanation?.core_reason??'정답과 선택지를 비교해 보세요.'}</p></div>}<div className="actions"><button className="button secondary" type="button">문제 신고</button><button className="button" disabled={!selected.length||submit.isPending||Boolean(result)} onClick={()=>submit.mutate()}>{submit.isPending?'채점 중…':'정답 확인'}</button></div>{submit.isError&&<ErrorState error={submit.error}/>}</section></>}
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { endpoints } from '../api/queries';
+import type { Question, Submission } from '../types';
+import { ErrorState, Loading, PageHeader, Progress } from '../components/common';
+
+const DEFAULT_STUDY_QUESTION_COUNT = 10;
+
+export function Study() {
+  const { id } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const certificationCode = new URLSearchParams(location.search).get('cert') ?? 'DEA-C01';
+  const domainCode = new URLSearchParams(location.search).get('domain');
+  const studyAll = new URLSearchParams(location.search).get('all') === 'true';
+  const create = useMutation({
+    mutationFn: () => endpoints.createStudy({
+      certification_code: certificationCode,
+      domain_code: domainCode,
+      mode: 'random',
+      question_count: studyAll && domainCode ? null : DEFAULT_STUDY_QUESTION_COUNT,
+    }),
+    onSuccess: session => navigate(`/study/${session.id}`, { replace: true }),
+  });
+  const { mutate: createSession, isPending, data } = create;
+
+  useEffect(() => {
+    if (!id && !isPending && !data) createSession();
+  }, [id, isPending, data, createSession]);
+
+  const session = useQuery({
+    queryKey: ['study', id],
+    queryFn: () => endpoints.study(id!),
+    enabled: Boolean(id),
+  });
+
+  if (!id) {
+    return create.isError
+      ? <ErrorState error={create.error} retry={() => createSession()} />
+      : <Loading label="학습 세션을 준비하는 중" />;
+  }
+  if (session.isLoading) return <Loading />;
+  if (session.isError) return <ErrorState error={session.error} retry={() => void session.refetch()} />;
+
+  return (
+    <QuestionView
+      key={session.data!.question?.id ?? 'complete'}
+      question={session.data!.question}
+      sessionId={id}
+      session={session.data!}
+      onNext={() => session.refetch()}
+    />
+  );
+}
+
+function QuestionView({ question, sessionId, session, onNext }: {
+  question?: Question;
+  sessionId: string;
+  session: { current_index: number; total_questions: number };
+  onNext: () => Promise<unknown>;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [result, setResult] = useState<Submission>();
+  const [movingNext, setMovingNext] = useState(false);
+  const submit = useMutation({
+    mutationFn: () => endpoints.submitStudy(question!.id, sessionId, { selected_answers: selected }),
+    onSuccess: setResult,
+  });
+
+  if (!question) {
+    return <div className="state"><strong>학습을 완료했습니다</strong><span>{session.total_questions}문제의 학습 기록이 저장되었습니다.</span></div>;
+  }
+
+  const multiple = question.question_type === 'multiple_response';
+  const choose = (choiceId: string) => setSelected(current => multiple
+    ? (current.includes(choiceId)
+      ? current.filter(item => item !== choiceId)
+      : current.length < question.required_answer_count ? [...current, choiceId] : current)
+    : [choiceId]);
+  const moveNext = async () => {
+    setMovingNext(true);
+    try { await onNext(); } finally { setMovingNext(false); }
+  };
+
+  return <>
+    <PageHeader
+      eyebrow="집중 학습"
+      title={`${session.current_index + 1} / ${session.total_questions}`}
+      action={<span className="badge">{multiple ? `${question.required_answer_count}개 선택` : '1개 선택'}</span>}
+    />
+    <Progress label="학습 진도" value={(session.current_index / session.total_questions) * 100} />
+    <section className="question">
+      <p className="question-en">{question.question_en}</p>
+      <h2>{question.question_ko}</h2>
+      <fieldset disabled={Boolean(result)}>
+        <legend className="sr-only">답안 선택</legend>
+        {question.choices.map(choice => {
+          const checked = selected.includes(choice.id);
+          const correct = result?.correct_answers.includes(choice.id);
+          return <label key={choice.id} className={`choice ${checked ? 'selected' : ''} ${correct ? 'correct' : ''} ${result && checked && !correct ? 'incorrect' : ''}`}>
+            <input type={multiple ? 'checkbox' : 'radio'} name="answer" checked={checked} onChange={() => choose(choice.id)} />
+            <b>{choice.id}</b>
+            <span>{choice.text_ko}<small>{choice.text_en}</small></span>
+          </label>;
+        })}
+      </fieldset>
+      {result && <div className={result.is_correct ? 'feedback success' : 'feedback danger'} role="status">
+        <b>{result.is_correct ? '정답입니다!' : '아쉬워요. 다시 기억해 두세요.'}</b>
+        <p>{result.explanation?.core_reason ?? '정답과 선택지를 비교해 보세요.'}</p>
+      </div>}
+      <div className="actions">
+        <button className="button secondary" type="button">문제 신고</button>
+        {!result
+          ? <button className="button" disabled={!selected.length || submit.isPending} onClick={() => submit.mutate()}>{submit.isPending ? '채점 중…' : '정답 확인'}</button>
+          : <button className="button" disabled={movingNext} onClick={() => void moveNext()}>{movingNext ? '불러오는 중…' : session.current_index + 1 >= session.total_questions ? '학습 완료' : '다음 문제'}</button>}
+      </div>
+      {submit.isError && <ErrorState error={submit.error} />}
+    </section>
+  </>;
+}

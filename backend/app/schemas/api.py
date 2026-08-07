@@ -76,7 +76,8 @@ class AnswerResult(BaseModel):
 class StudySessionCreate(BaseModel):
     certification_code: str
     domain_code: str | None = None
-    question_count: int = Field(10, ge=1, le=200)
+    # None means every eligible question in the selected domain.
+    question_count: int | None = Field(10, ge=1, le=1000)
     seed: int | None = None
 
 
@@ -102,6 +103,19 @@ class ReviewMarkUpdate(BaseModel):
 
 class WrongNoteUpdate(BaseModel):
     status: Literal["active", "reviewing", "mastered"]
+
+
+class WrongNoteDelete(BaseModel):
+    question_ids: list[int] = Field(min_length=1, max_length=1000)
+
+
+class WrongNoteOut(BaseModel):
+    question_id: int
+    question_uid: str
+    question_ko: str
+    wrong_count: int
+    status: str
+    last_wrong_at: datetime
 
 
 class ReportCreate(BaseModel):
