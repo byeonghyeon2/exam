@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../api/queries';
@@ -27,5 +28,25 @@ describe('Dashboard', () => {
     expect(screen.getByText('2')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '솔루션스 아키텍트' })).toBeInTheDocument();
     expect(screen.queryByText('학습 가능 문제')).not.toBeInTheDocument();
+  });
+
+  it('opens the available certification list from the count', async () => {
+    vi.spyOn(endpoints, 'certifications').mockResolvedValue([
+      { code: 'DEA-C01', name_ko: 'AWS 데이터 엔지니어', name_en: 'AWS Data Engineer', exam_version: 'DEA-C01', default_question_count: 65, default_duration_minutes: 130, passing_score: 720 },
+    ]);
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter><Dashboard /></MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: '학습 가능 자격증 1개 보기' }));
+    const dialog = screen.getByRole('dialog', { name: '학습 가능 자격증' });
+    expect(within(dialog).getByRole('img', { name: 'Amazon Web Services' })).toBeInTheDocument();
+    expect(within(dialog).getByText('DEA-C01')).toBeInTheDocument();
+    expect(within(dialog).getByText('AWS 데이터 엔지니어')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '닫기' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
