@@ -150,6 +150,58 @@ def complete_study(session_id: str, db: Db) -> dict[str, int | bool]:
     }
 
 
+@router.get("/study/history", response_model=list[StudyHistoryOut])
+def study_history(db: Db) -> list[StudyHistoryOut]:
+    rows = db.execute(
+        select(StudyAttempt, Question, Certification)
+        .join(Question, Question.id == StudyAttempt.question_id)
+        .join(Certification, Certification.id == Question.certification_id)
+        .where(StudyAttempt.wrong_note_processed.is_(True))
+        .order_by(StudyAttempt.attempted_at.desc(), StudyAttempt.id.desc())
+    ).all()
+    grouped: dict[str, dict[str, Any]] = {}
+    for attempt, question, certification in rows:
+        group = grouped.setdefault(attempt.session_id, {
+            "session_id": attempt.session_id,
+            "certification_code": certification.certification_code,
+            "certification_name": certification.name_ko or certification.name_en,
+            "completed_at": attempt.attempted_at,
+            "total_count": 0,
+            "correct_count": 0,
+            "wrong_count": 0,
+            "wrong_questions": [],
+        })
+        group["total_count"] += 1
+        if attempt.is_correct:
+            group["correct_count"] += 1
+        else:
+            group["wrong_count"] += 1
+            group["wrong_questions"].append({
+                "id": question.id,
+                "question_uid": question.question_uid,
+                "question_ko": question.question_ko,
+            })
+    return [StudyHistoryOut(**group) for group in grouped.values() if group["wrong_count"]]
+
+
+@router.post("/study/history/{session_id}/retry", response_model=StudySessionOut, status_code=201)
+def retry_study_history(session_id: str, db: Db) -> StudySessionOut:
+    question_ids = list(db.scalars(
+        select(StudyAttempt.question_id)
+        .where(
+            StudyAttempt.session_id == session_id,
+            StudyAttempt.wrong_note_processed.is_(True),
+            StudyAttempt.is_correct.is_(False),
+        )
+        .order_by(StudyAttempt.id)
+    ))
+    if not question_ids:
+        raise HTTPException(404, "Completed study session with wrong answers not found")
+    retry_session_id = str(uuid4())
+    _study_sessions[retry_session_id] = question_ids
+    return StudySessionOut(id=retry_session_id, question_ids=question_ids)
+
+
 @router.post("/study/questions/{question_id}/submit", response_model=AnswerResult)
 def submit_study(question_id: int, payload: SubmitAnswer, db: Db, session_id: str = Query(...)) -> AnswerResult:
     if question_id not in _study_sessions.get(session_id, []): raise HTTPException(409, "Question is not assigned to session")

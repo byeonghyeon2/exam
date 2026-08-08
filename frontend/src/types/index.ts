@@ -9,4 +9,6 @@ export type StudySession={id:string;certification_code:string;mode:string;total_
 export type Submission={is_correct:boolean;correct_answers:string[];explanation?:{core_reason:string;memory_summary?:string}};
 export type ExamResult={id:string;raw_score:number;scaled_score:number;passing_score:number;result:'pass'|'fail';correct_count:number;total_count:number;domains?:{name:string;score:number}[]};
 export type WrongNote={question_id:number;question_uid:string;question_ko:string;wrong_count:number;status:'learning'|'mastered';last_wrong_at:string};
+export type StudyHistoryQuestion={id:number;question_uid:string;question_ko:string};
+export type StudyHistory={session_id:string;certification_code:string;certification_name:string;completed_at:string;total_count:number;correct_count:number;wrong_count:number;wrong_questions:StudyHistoryQuestion[]};
 export type QuestionReport={id:number;question_id:number;question_uid:string;question_ko:string;question_en:string;report_type:string;description:string;status:string;resolution_note:string|null;created_at:string;resolved_at:string|null};

@@ -86,6 +86,23 @@ class StudySessionOut(BaseModel):
     question_ids: list[int]
 
 
+class StudyHistoryQuestion(BaseModel):
+    id: int
+    question_uid: str
+    question_ko: str
+
+
+class StudyHistoryOut(BaseModel):
+    session_id: str
+    certification_code: str
+    certification_name: str
+    completed_at: datetime
+    total_count: int
+    correct_count: int
+    wrong_count: int
+    wrong_questions: list[StudyHistoryQuestion]
+
+
 class MockExamCreate(BaseModel):
     certification_code: str
     question_count: int | None = Field(None, ge=1, le=200)

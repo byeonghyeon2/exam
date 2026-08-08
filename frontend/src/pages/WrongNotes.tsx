@@ -1,42 +1,40 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { AlertCircle, RotateCcw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { endpoints } from '../api/queries';
 import { Empty, ErrorState, Loading, PageHeader } from '../components/common';
 
-function formatWrongTime(value: string) {
+function formatStudyTime(value: string) {
   const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`;
-  const parts = new Intl.DateTimeFormat('ko-KR', {
+  return new Intl.DateTimeFormat('ko-KR', {
     timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(new Date(normalized));
-  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? '';
-  return `${get('year')}.${get('month')}.${get('day')} ${get('hour')}:${get('minute')}`;
+  }).format(new Date(normalized));
 }
 
 export function WrongNotes() {
-  const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<number[]>([]);
-  const query = useQuery({ queryKey: ['wrong-notes'], queryFn: endpoints.wrongNotes });
-  const remove = useMutation({
-    mutationFn: () => endpoints.deleteWrongNotes(selected),
-    onSuccess: async () => { setSelected([]); await queryClient.invalidateQueries({ queryKey: ['wrong-notes'] }); },
+  const navigate = useNavigate();
+  const query = useQuery({ queryKey: ['study-history'], queryFn: endpoints.studyHistory });
+  const retry = useMutation({
+    mutationFn: endpoints.retryStudyHistory,
+    onSuccess: session => navigate(`/study/${session.id}`),
   });
-  const notes = query.data ?? [];
-  const toggle = (id: number) => setSelected(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
-  const allSelected = notes.length > 0 && selected.length === notes.length;
+  const histories = query.data ?? [];
 
   return <>
-    <PageHeader eyebrow="기억 보관" title="오답노트" description="삭제할 문제를 직접 선택할 수 있습니다." action={notes.length ? <div className="wrong-actions">
-      <label><input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? [] : notes.map(note => note.question_id))} /> 전체 선택</label>
-      <button className="button" disabled={!selected.length || remove.isPending} onClick={() => remove.mutate()}>{remove.isPending ? '삭제 중…' : `선택 삭제 (${selected.length})`}</button>
-    </div> : undefined} />
-    {query.isLoading ? <Loading /> : query.isError ? <ErrorState error={query.error} /> : !notes.length
-      ? <Empty>학습 중 틀린 문제가 여기에 자동으로 모입니다.</Empty>
-      : <div className="list wrong-list">{notes.map(note => <article key={note.question_id}>
-        <input aria-label={`${note.question_uid} 선택`} type="checkbox" checked={selected.includes(note.question_id)} onChange={() => toggle(note.question_id)} />
-        <div><h3>{formatWrongTime(note.last_wrong_at)} · 누적 {note.wrong_count}회</h3><span className="badge">{note.question_uid}</span><p>{note.question_ko}</p></div>
-        <button className="button">다시 풀기</button>
-      </article>)}</div>}
-    {remove.isError && <ErrorState error={remove.error} />}
+    <PageHeader eyebrow="학습 기록" title="오답노트" description="한 번의 학습을 하나의 묶음으로 확인하고, 틀린 문제만 다시 풀어보세요." />
+    {query.isLoading ? <Loading /> : query.isError ? <ErrorState error={query.error} retry={() => void query.refetch()} /> : !histories.length
+      ? <Empty>완료한 학습에서 틀린 문제가 생기면 학습 묶음이 여기에 표시됩니다.</Empty>
+      : <div className="wrong-session-list">{histories.map((history, index) => <section className="wrong-session-card" key={history.session_id}>
+        <header>
+          <div><span className="badge">{history.certification_code}</span><h2>학습 기록 #{histories.length - index}</h2><p>{history.certification_name} · {formatStudyTime(history.completed_at)}</p></div>
+          <button className="button" disabled={retry.isPending} onClick={() => retry.mutate(history.session_id)}><RotateCcw size={17} />{retry.isPending && retry.variables === history.session_id ? '준비 중…' : `${history.wrong_count}문제 다시 풀기`}</button>
+        </header>
+        <div className="session-metrics" aria-label="학습 결과 요약">
+          <div><small>총 문제</small><b>{history.total_count}</b></div><div><small>정답</small><b>{history.correct_count}</b></div><div className="wrong-count"><small>오답</small><b>{history.wrong_count}</b></div>
+        </div>
+        <div className="wrong-question-group"><h3><AlertCircle size={18} /> 틀린 문제</h3><ol>{history.wrong_questions.map(question => <li key={question.id}><span>{question.question_uid}</span><p>{question.question_ko}</p></li>)}</ol></div>
+      </section>)}</div>}
+    {retry.isError && <ErrorState error={retry.error} />}
   </>;
 }

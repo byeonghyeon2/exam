@@ -93,6 +93,7 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings
     router_module._study_sessions["batch-session"] = question_ids
+    retry_session_id = None
 
     try:
         with TestClient(app) as client:
@@ -118,10 +119,25 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
                 "finalized": True,
             }
 
+            history = client.get("/api/v1/study/history")
+            assert history.status_code == 200
+            assert len(history.json()) == 1
+            batch = history.json()[0]
+            assert batch["session_id"] == "batch-session"
+            assert (batch["total_count"], batch["correct_count"], batch["wrong_count"]) == (2, 1, 1)
+            assert [question["id"] for question in batch["wrong_questions"]] == [question_ids[0]]
+
+            retry = client.post("/api/v1/study/history/batch-session/retry")
+            assert retry.status_code == 201
+            assert retry.json()["question_ids"] == [question_ids[0]]
+            retry_session_id = retry.json()["id"]
+
             repeated = client.post("/api/v1/study/sessions/batch-session/complete")
             assert repeated.status_code == 200
     finally:
         router_module._study_sessions.pop("batch-session", None)
+        if retry_session_id:
+            router_module._study_sessions.pop(retry_session_id, None)
         app.dependency_overrides.clear()
 
     with session_factory() as db:
