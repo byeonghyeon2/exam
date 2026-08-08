@@ -15,10 +15,11 @@ function providerName(certification: Certification) {
 }
 
 function CertificationMark({ certification }: { certification: Certification }) {
+  const [imageFailed, setImageFailed] = useState(false);
   const provider = providerName(certification);
-  if (provider === 'aws') return <img className="aws-logo" src="/brands/aws-logo.png" alt="Amazon Web Services" />;
+  if (provider === 'aws' && !imageFailed) return <img className="aws-logo" src="/brands/aws-logo.png" alt="Amazon Web Services" onError={() => setImageFailed(true)} />;
   if (provider === 'snowflake') return <svg aria-label={siSnowflake.title} role="img" viewBox="0 0 24 24" style={{ color: `#${siSnowflake.hex}` }}><path d={siSnowflake.path} fill="currentColor" /></svg>;
-  return <BookOpen aria-hidden="true" />;
+  return <BookOpen aria-label={`${certification.code} 자격증`} role="img" />;
 }
 
 function CertificationModal({ certifications, onClose }: { certifications: Certification[]; onClose: () => void }) {

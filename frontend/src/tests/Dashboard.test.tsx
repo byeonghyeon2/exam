@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -48,5 +48,19 @@ describe('Dashboard', () => {
     expect(within(dialog).getByText('AWS 데이터 엔지니어')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '닫기' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('shows a fallback mark when a provider logo fails to load', async () => {
+    vi.spyOn(endpoints, 'certifications').mockResolvedValue([
+      { code: 'DEA-C01', name_ko: 'AWS 데이터 엔지니어', name_en: 'AWS Data Engineer', exam_version: 'DEA-C01', default_question_count: 65, default_duration_minutes: 130, passing_score: 720 },
+    ]);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter><Dashboard /></MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.error(await screen.findByRole('img', { name: 'Amazon Web Services' }));
+    expect(screen.getByRole('img', { name: 'DEA-C01 자격증' })).toBeInTheDocument();
   });
 });
