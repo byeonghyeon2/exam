@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +9,7 @@ import { WrongNotes } from '../pages/WrongNotes';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('WrongNotes', () => {
-  it('shows one card per study session and retries only wrong questions', async () => {
+  it('shows a session summary without question details and retries only wrong questions', async () => {
     vi.spyOn(endpoints, 'studyHistory').mockResolvedValue([{
       session_id: 'batch-1', certification_code: 'DEA-C01', certification_name: 'AWS 데이터 엔지니어', completed_at: '2026-08-08T10:00:00Z',
       total_count: 10, correct_count: 7, wrong_count: 3,
@@ -25,9 +25,25 @@ describe('WrongNotes', () => {
 
     expect(await screen.findByRole('heading', { name: '학습 기록 #1' })).toBeInTheDocument();
     expect(screen.getByText('총 문제').parentElement).toHaveTextContent('10');
-    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+    expect(screen.queryByText('틀린 문제 1')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '3문제 다시 풀기' }));
     expect(retry).toHaveBeenCalledWith('batch-1', expect.anything());
     expect(await screen.findByRole('heading', { name: '재학습 화면' })).toBeInTheDocument();
+  });
+
+  it('deletes a study history card after confirmation', async () => {
+    vi.spyOn(endpoints, 'studyHistory').mockResolvedValueOnce([{
+      session_id: 'batch-1', certification_code: 'DEA-C01', certification_name: 'AWS 데이터 엔지니어', completed_at: '2026-08-08T10:00:00Z',
+      total_count: 10, correct_count: 7, wrong_count: 3, wrong_questions: [],
+    }]).mockResolvedValue([]);
+    const remove = vi.spyOn(endpoints, 'deleteStudyHistory').mockResolvedValue({ deleted_count: 10 });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><WrongNotes /></MemoryRouter></QueryClientProvider>);
+
+    await user.click(await screen.findByRole('button', { name: '삭제' }));
+    expect(window.confirm).toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith('batch-1', expect.anything());
+    await waitFor(() => expect(screen.queryByRole('heading', { name: '학습 기록 #1' })).not.toBeInTheDocument());
   });
 });

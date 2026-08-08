@@ -134,6 +134,12 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
 
             repeated = client.post("/api/v1/study/sessions/batch-session/complete")
             assert repeated.status_code == 200
+
+            deleted = client.delete("/api/v1/study/history/batch-session")
+            assert deleted.status_code == 200
+            assert deleted.json() == {"deleted_count": 2}
+            assert client.get("/api/v1/study/history").json() == []
+            assert client.delete("/api/v1/study/history/batch-session").status_code == 404
     finally:
         router_module._study_sessions.pop("batch-session", None)
         if retry_session_id:
@@ -142,9 +148,6 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
 
     with session_factory() as db:
         note = db.scalar(select(WrongNote))
-        assert note is not None
-        assert note.question_id == question_ids[0]
-        assert note.wrong_count == 1
+        assert note is None
         attempts = list(db.scalars(select(StudyAttempt)))
-        assert len(attempts) == 2
-        assert all(attempt.wrong_note_processed for attempt in attempts)
+        assert attempts == []

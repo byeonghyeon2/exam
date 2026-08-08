@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { AlertCircle, RotateCcw } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { RotateCcw, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { endpoints } from '../api/queries';
 import { Empty, ErrorState, Loading, PageHeader } from '../components/common';
@@ -14,10 +14,18 @@ function formatStudyTime(value: string) {
 
 export function WrongNotes() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ['study-history'], queryFn: endpoints.studyHistory });
   const retry = useMutation({
     mutationFn: endpoints.retryStudyHistory,
     onSuccess: session => navigate(`/study/${session.id}`),
+  });
+  const remove = useMutation({
+    mutationFn: endpoints.deleteStudyHistory,
+    onSuccess: (_result, sessionId) => {
+      queryClient.setQueryData(['study-history'], (current: typeof query.data) => current?.filter(history => history.session_id !== sessionId));
+      void queryClient.invalidateQueries({ queryKey: ['study-history'] });
+    },
   });
   const histories = query.data ?? [];
 
@@ -28,13 +36,15 @@ export function WrongNotes() {
       : <div className="wrong-session-list">{histories.map((history, index) => <section className="wrong-session-card" key={history.session_id}>
         <header>
           <div><span className="badge">{history.certification_code}</span><h2>학습 기록 #{histories.length - index}</h2><p>{history.certification_name} · {formatStudyTime(history.completed_at)}</p></div>
-          <button className="button" disabled={retry.isPending} onClick={() => retry.mutate(history.session_id)}><RotateCcw size={17} />{retry.isPending && retry.variables === history.session_id ? '준비 중…' : `${history.wrong_count}문제 다시 풀기`}</button>
+          <div className="wrong-session-actions">
+            <button className="button secondary delete-button" disabled={remove.isPending || retry.isPending} onClick={() => window.confirm('이 오답노트를 삭제할까요? 삭제한 기록은 복구할 수 없습니다.') && remove.mutate(history.session_id)}><Trash2 size={17} />{remove.isPending && remove.variables === history.session_id ? '삭제 중…' : '삭제'}</button>
+            <button className="button" disabled={retry.isPending || remove.isPending} onClick={() => retry.mutate(history.session_id)}><RotateCcw size={17} />{retry.isPending && retry.variables === history.session_id ? '준비 중…' : `${history.wrong_count}문제 다시 풀기`}</button>
+          </div>
         </header>
         <div className="session-metrics" aria-label="학습 결과 요약">
           <div><small>총 문제</small><b>{history.total_count}</b></div><div><small>정답</small><b>{history.correct_count}</b></div><div className="wrong-count"><small>오답</small><b>{history.wrong_count}</b></div>
         </div>
-        <div className="wrong-question-group"><h3><AlertCircle size={18} /> 틀린 문제</h3><ol>{history.wrong_questions.map(question => <li key={question.id}><span>{question.question_uid}</span><p>{question.question_ko}</p></li>)}</ol></div>
       </section>)}</div>}
-    {retry.isError && <ErrorState error={retry.error} />}
+    {(retry.isError || remove.isError) && <ErrorState error={retry.error ?? remove.error} />}
   </>;
 }

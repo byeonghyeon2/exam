@@ -202,6 +202,53 @@ def retry_study_history(session_id: str, db: Db) -> StudySessionOut:
     return StudySessionOut(id=retry_session_id, question_ids=question_ids)
 
 
+def rebuild_wrong_note(db: Session, question_id: int) -> None:
+    attempts = list(db.scalars(
+        select(StudyAttempt)
+        .where(
+            StudyAttempt.question_id == question_id,
+            StudyAttempt.wrong_note_processed.is_(True),
+        )
+        .order_by(StudyAttempt.attempted_at, StudyAttempt.id)
+    ))
+    wrong_attempts = [attempt for attempt in attempts if not attempt.is_correct]
+    note = db.scalar(select(WrongNote).where(WrongNote.question_id == question_id))
+    if not wrong_attempts:
+        if note:
+            db.delete(note)
+        return
+    first_wrong_index = attempts.index(wrong_attempts[0])
+    correct_after_wrong = sum(attempt.is_correct for attempt in attempts[first_wrong_index + 1:])
+    if not note:
+        note = WrongNote(question_id=question_id)
+        db.add(note)
+    note.wrong_count = len(wrong_attempts)
+    note.correct_after_wrong_count = correct_after_wrong
+    note.first_wrong_at = wrong_attempts[0].attempted_at
+    note.last_wrong_at = wrong_attempts[-1].attempted_at
+
+
+@router.delete("/study/history/{session_id}")
+def delete_study_history(session_id: str, db: Db) -> dict[str, int]:
+    attempts = list(db.scalars(
+        select(StudyAttempt).where(
+            StudyAttempt.session_id == session_id,
+            StudyAttempt.wrong_note_processed.is_(True),
+        )
+    ))
+    if not attempts:
+        raise HTTPException(404, "Completed study session not found")
+    question_ids = {attempt.question_id for attempt in attempts}
+    for attempt in attempts:
+        db.delete(attempt)
+    db.flush()
+    for question_id in question_ids:
+        rebuild_wrong_note(db, question_id)
+    db.commit()
+    _study_sessions.pop(session_id, None)
+    return {"deleted_count": len(attempts)}
+
+
 @router.post("/study/questions/{question_id}/submit", response_model=AnswerResult)
 def submit_study(question_id: int, payload: SubmitAnswer, db: Db, session_id: str = Query(...)) -> AnswerResult:
     if question_id not in _study_sessions.get(session_id, []): raise HTTPException(409, "Question is not assigned to session")
