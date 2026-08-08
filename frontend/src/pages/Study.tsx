@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
 import type { Question, Submission } from '../types';
 import { ErrorState, Loading, PageHeader, Progress } from '../components/common';
+import { ReportModal } from '../components/ReportModal';
 
 const DEFAULT_STUDY_QUESTION_COUNT = 10;
 
@@ -63,6 +64,7 @@ function QuestionView({ question, sessionId, session, onNext }: {
   const [selected, setSelected] = useState<string[]>([]);
   const [result, setResult] = useState<Submission>();
   const [movingNext, setMovingNext] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const submit = useMutation({
     mutationFn: () => endpoints.submitStudy(question!.id, sessionId, { selected_answers: selected }),
     onSuccess: setResult,
@@ -102,6 +104,8 @@ function QuestionView({ question, sessionId, session, onNext }: {
             <input type={multiple ? 'checkbox' : 'radio'} name="answer" checked={checked} onChange={() => choose(choice.id)} />
             <b>{choice.id}</b>
             <span>{choice.text_ko}<small>{choice.text_en}</small></span>
+            {result && correct && <em className="choice-status correct-status">정답</em>}
+            {result && checked && !correct && <em className="choice-status incorrect-status">내 선택 · 오답</em>}
           </label>;
         })}
       </fieldset>
@@ -110,12 +114,13 @@ function QuestionView({ question, sessionId, session, onNext }: {
         <p>{result.explanation?.core_reason ?? '정답과 선택지를 비교해 보세요.'}</p>
       </div>}
       <div className="actions">
-        <button className="button secondary" type="button">문제 신고</button>
+        <button className="button secondary" type="button" onClick={() => setReportOpen(true)}>문제 신고</button>
         {!result
           ? <button className="button" disabled={!selected.length || submit.isPending} onClick={() => submit.mutate()}>{submit.isPending ? '채점 중…' : '정답 확인'}</button>
           : <button className="button" disabled={movingNext} onClick={() => void moveNext()}>{movingNext ? '불러오는 중…' : session.current_index + 1 >= session.total_questions ? '학습 완료' : '다음 문제'}</button>}
       </div>
       {submit.isError && <ErrorState error={submit.error} />}
     </section>
+    {reportOpen && <ReportModal questionId={question.id} onClose={() => setReportOpen(false)} />}
   </>;
 }

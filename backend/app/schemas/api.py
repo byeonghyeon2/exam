@@ -120,7 +120,21 @@ class WrongNoteOut(BaseModel):
 
 class ReportCreate(BaseModel):
     report_type: Literal["wrong_answer", "missing_content", "translation_error", "language_mismatch", "wrong_answer_count", "missing_asset", "wrong_explanation", "duplicate", "other"]
-    description: str = Field("", max_length=4000)
+    description: str = Field(min_length=1, max_length=4000)
+
+
+class AdminReportOut(BaseModel):
+    id: int
+    question_id: int
+    question_uid: str
+    question_ko: str
+    question_en: str
+    report_type: str
+    description: str
+    status: str
+    resolution_note: str | None
+    created_at: datetime
+    resolved_at: datetime | None
 
 
 class ReportUpdate(BaseModel):

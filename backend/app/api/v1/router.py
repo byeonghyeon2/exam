@@ -391,11 +391,26 @@ def import_job(job_id: int, db: Db) -> ImportJob:
     return item
 
 
-@admin.get("/reports", response_model=None)
-def reports(db: Db, report_status: str | None = Query(None, alias="status")) -> list[QuestionReport]:
-    stmt = select(QuestionReport).order_by(QuestionReport.created_at.desc())
+@admin.get("/reports", response_model=list[AdminReportOut])
+def reports(db: Db, report_status: str | None = Query(None, alias="status")) -> list[AdminReportOut]:
+    stmt = select(QuestionReport, Question).join(Question, QuestionReport.question_id == Question.id).order_by(QuestionReport.created_at.desc())
     if report_status: stmt = stmt.where(QuestionReport.status == report_status)
-    return list(db.scalars(stmt))
+    return [
+        AdminReportOut(
+            id=item.id,
+            question_id=item.question_id,
+            question_uid=question.question_uid,
+            question_ko=question.question_ko,
+            question_en=question.question_en,
+            report_type=item.report_type,
+            description=item.description,
+            status=item.status,
+            resolution_note=item.resolution_note,
+            created_at=item.created_at,
+            resolved_at=item.resolved_at,
+        )
+        for item, question in db.execute(stmt).all()
+    ]
 
 
 @admin.patch("/reports/{report_id}")
