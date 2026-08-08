@@ -118,6 +118,7 @@ class StudyAttempt(Base):
     question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
     selected_answers_json: Mapped[list[str]] = mapped_column(JSON)
     is_correct: Mapped[bool] = mapped_column(Boolean)
+    wrong_note_processed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

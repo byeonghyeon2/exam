@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
-import type { Question, Submission } from '../types';
+import type { Question, StudySession, Submission } from '../types';
 import { ErrorState, Loading, PageHeader, Progress } from '../components/common';
 import { ReportModal } from '../components/ReportModal';
 
@@ -35,6 +35,10 @@ export function Study() {
     queryFn: () => endpoints.study(id!),
     enabled: Boolean(id),
   });
+  const complete = useMutation({
+    mutationFn: () => endpoints.completeStudy(id!),
+    onSuccess: () => session.refetch(),
+  });
 
   if (!id) {
     return create.isError
@@ -51,15 +55,19 @@ export function Study() {
       sessionId={id}
       session={session.data!}
       onNext={() => session.refetch()}
+      onComplete={() => complete.mutateAsync()}
+      completeError={complete.error}
     />
   );
 }
 
-function QuestionView({ question, sessionId, session, onNext }: {
+function QuestionView({ question, sessionId, session, onNext, onComplete, completeError }: {
   question?: Question;
   sessionId: string;
-  session: { current_index: number; total_questions: number };
+  session: StudySession;
   onNext: () => Promise<unknown>;
+  onComplete: () => Promise<unknown>;
+  completeError: Error | null;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [result, setResult] = useState<Submission>();
@@ -69,9 +77,17 @@ function QuestionView({ question, sessionId, session, onNext }: {
     mutationFn: () => endpoints.submitStudy(question!.id, sessionId, { selected_answers: selected }),
     onSuccess: setResult,
   });
+  const moveNext = async (finish = false) => {
+    setMovingNext(true);
+    try { await (finish ? onComplete() : onNext()); } finally { setMovingNext(false); }
+  };
 
   if (!question) {
-    return <div className="state"><strong>학습을 완료했습니다</strong><span>{session.total_questions}문제의 학습 기록이 저장되었습니다.</span></div>;
+    const summary = session.summary;
+    if (!summary?.finalized) {
+      return <div className="state"><strong>모든 문제를 풀었습니다</strong><span>오답 노트를 한 번에 정리해 주세요.</span><button className="button" disabled={movingNext} onClick={() => void moveNext(true)}>학습 결과 정리</button>{completeError&&<span className="form-error">{completeError.message}</span>}</div>;
+    }
+    return <div className="state study-summary"><strong>학습을 완료했습니다</strong><div className="metrics"><article><small>총 풀이</small><b>{summary.answered_count}</b></article><article><small>정답</small><b>{summary.correct_count}</b></article><article><small>오답</small><b>{summary.wrong_count}</b></article></div><span>틀린 문제 {summary.wrong_count}개가 오답 노트에 한 번에 반영되었습니다.</span></div>;
   }
 
   const multiple = question.question_type === 'multiple_response';
@@ -80,11 +96,6 @@ function QuestionView({ question, sessionId, session, onNext }: {
       ? current.filter(item => item !== choiceId)
       : current.length < question.required_answer_count ? [...current, choiceId] : current)
     : [choiceId]);
-  const moveNext = async () => {
-    setMovingNext(true);
-    try { await onNext(); } finally { setMovingNext(false); }
-  };
-
   return <>
     <PageHeader
       eyebrow="집중 학습"
@@ -117,9 +128,10 @@ function QuestionView({ question, sessionId, session, onNext }: {
         <button className="button secondary" type="button" onClick={() => setReportOpen(true)}>문제 신고</button>
         {!result
           ? <button className="button" disabled={!selected.length || submit.isPending} onClick={() => submit.mutate()}>{submit.isPending ? '채점 중…' : '정답 확인'}</button>
-          : <button className="button" disabled={movingNext} onClick={() => void moveNext()}>{movingNext ? '불러오는 중…' : session.current_index + 1 >= session.total_questions ? '학습 완료' : '다음 문제'}</button>}
+          : <button className="button" disabled={movingNext} onClick={() => void moveNext(session.current_index + 1 >= session.total_questions)}>{movingNext ? '정리하는 중…' : session.current_index + 1 >= session.total_questions ? '학습 결과 보기' : '다음 문제'}</button>}
       </div>
       {submit.isError && <ErrorState error={submit.error} />}
+      {completeError && <ErrorState error={completeError} />}
     </section>
     {reportOpen && <ReportModal questionId={question.id} onClose={() => setReportOpen(false)} />}
   </>;

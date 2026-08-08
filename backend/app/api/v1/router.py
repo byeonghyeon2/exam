@@ -89,10 +89,24 @@ def create_study(payload: StudySessionCreate, db: Db) -> StudySessionOut:
 def study_session(session_id: str, db: Db) -> dict[str, Any]:
     if session_id not in _study_sessions: raise HTTPException(404, "Study session not found")
     ids = _study_sessions[session_id]
-    attempted = set(db.scalars(select(StudyAttempt.question_id).where(StudyAttempt.session_id == session_id)))
+    attempts = list(db.scalars(select(StudyAttempt).where(StudyAttempt.session_id == session_id)))
+    attempted = {attempt.question_id for attempt in attempts}
     next_id = next((question_id for question_id in ids if question_id not in attempted), None)
     question = QuestionOut.model_validate(get_question(db, next_id)) if next_id is not None else None
-    return {"id": session_id, "question_ids": ids, "total_questions": len(ids), "current_index": len(attempted), "question": question}
+    return {
+        "id": session_id,
+        "question_ids": ids,
+        "total_questions": len(ids),
+        "current_index": len(attempted),
+        "question": question,
+        "summary": {
+            "total_questions": len(ids),
+            "answered_count": len(attempted),
+            "correct_count": sum(attempt.is_correct for attempt in attempts),
+            "wrong_count": sum(not attempt.is_correct for attempt in attempts),
+            "finalized": bool(attempts) and all(attempt.wrong_note_processed for attempt in attempts),
+        },
+    }
 
 
 @router.get("/study/sessions/{session_id}/next", response_model=QuestionOut)
@@ -114,11 +128,38 @@ def update_wrong_note(db: Session, question_id: int, correct: bool) -> None:
         note.correct_after_wrong_count += 1
 
 
+@router.post("/study/sessions/{session_id}/complete")
+def complete_study(session_id: str, db: Db) -> dict[str, int | bool]:
+    ids = _study_sessions.get(session_id)
+    if not ids:
+        raise HTTPException(404, "Study session not found")
+    attempts = list(db.scalars(select(StudyAttempt).where(StudyAttempt.session_id == session_id)))
+    attempted_ids = {attempt.question_id for attempt in attempts}
+    if len(attempted_ids) != len(ids) or not set(ids) <= attempted_ids:
+        raise HTTPException(409, "Complete every assigned question before finishing the session")
+    for attempt in attempts:
+        if attempt.wrong_note_processed:
+            continue
+        update_wrong_note(db, attempt.question_id, attempt.is_correct)
+        attempt.wrong_note_processed = True
+    db.commit()
+    correct_count = sum(attempt.is_correct for attempt in attempts)
+    return {
+        "total_questions": len(ids),
+        "answered_count": len(attempted_ids),
+        "correct_count": correct_count,
+        "wrong_count": len(ids) - correct_count,
+        "finalized": True,
+    }
+
+
 @router.post("/study/questions/{question_id}/submit", response_model=AnswerResult)
 def submit_study(question_id: int, payload: SubmitAnswer, db: Db, session_id: str = Query(...)) -> AnswerResult:
     if question_id not in _study_sessions.get(session_id, []): raise HTTPException(409, "Question is not assigned to session")
+    existing = db.scalar(select(StudyAttempt).where(StudyAttempt.session_id == session_id, StudyAttempt.question_id == question_id))
+    if existing: raise HTTPException(409, "Question already answered in this session")
     question = get_question(db, question_id); answers = current_answers(question); correct = score_answer(payload.selected_answers, answers)
-    db.add(StudyAttempt(session_id=session_id, question_id=question_id, selected_answers_json=payload.selected_answers, is_correct=correct)); update_wrong_note(db, question_id, correct); db.commit()
+    db.add(StudyAttempt(session_id=session_id, question_id=question_id, selected_answers_json=payload.selected_answers, is_correct=correct)); db.commit()
     return AnswerResult(correct=correct, selected_answers=payload.selected_answers, correct_answers=answers)
 
 

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -39,7 +39,10 @@ function renderStudy() {
   );
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('Study', () => {
   it('keeps the wrong selection and visually reveals the correct answer', async () => {
@@ -81,5 +84,45 @@ describe('Study', () => {
       description: '정답이 이상한 것 같음',
     });
     expect(await screen.findByRole('heading', { name: '신고가 접수되었습니다' })).toBeInTheDocument();
+  });
+
+  it('finalizes wrong notes in a batch and shows the study summary', async () => {
+    vi.spyOn(endpoints, 'study')
+      .mockResolvedValueOnce(session)
+      .mockResolvedValueOnce({
+        ...session,
+        current_index: 1,
+        question: undefined,
+        summary: {
+          total_questions: 1,
+          answered_count: 1,
+          correct_count: 0,
+          wrong_count: 1,
+          finalized: true,
+        },
+      });
+    vi.spyOn(endpoints, 'submitStudy').mockResolvedValue({
+      is_correct: false,
+      correct_answers: ['C'],
+    });
+    const complete = vi.spyOn(endpoints, 'completeStudy').mockResolvedValue({
+      total_questions: 1,
+      answered_count: 1,
+      correct_count: 0,
+      wrong_count: 1,
+      finalized: true,
+    });
+    const user = userEvent.setup();
+    renderStudy();
+
+    await user.click(await screen.findByRole('radio', { name: /사용자 선택/ }));
+    await user.click(screen.getByRole('button', { name: '정답 확인' }));
+    await user.click(await screen.findByRole('button', { name: '학습 결과 보기' }));
+
+    expect(complete).toHaveBeenCalledWith('session-1');
+    expect(await screen.findByText('학습을 완료했습니다')).toBeInTheDocument();
+    expect(screen.getByText('총 풀이')).toBeInTheDocument();
+    expect(screen.getByText('오답')).toBeInTheDocument();
+    expect(screen.getByText(/틀린 문제 1개가 오답 노트에 한 번에 반영/)).toBeInTheDocument();
   });
 });
