@@ -7,6 +7,7 @@ export type MockReadiness={ready:boolean;question_count:number;unclassified:numb
 export type StudySummary={total_questions:number;answered_count:number;correct_count:number;wrong_count:number;finalized:boolean};
 export type StudySession={id:string;certification_code:string;mode:string;total_questions:number;current_index:number;question?:Question;summary?:StudySummary};
 export type Submission={is_correct:boolean;correct_answers:string[];explanation?:{core_reason:string;memory_summary?:string}};
+export type Explanation={correct_answer_summary:string;core_reason:string;keywords_json:string[];choice_analysis_json:Record<string,string>;related_concepts:string;exam_traps:string;memory_summary:string};
 export type ExamResult={id:string;raw_score:number;scaled_score:number;passing_score:number;result:'pass'|'fail';correct_count:number;total_count:number;domains?:{name:string;score:number}[]};
 export type WrongNote={question_id:number;question_uid:string;question_ko:string;wrong_count:number;status:'learning'|'mastered';last_wrong_at:string};
 export type StudyHistoryQuestion={id:number;question_uid:string;question_ko:string};

@@ -49,7 +49,7 @@ export function Dashboard() {
     <section className="hero">
       <div><Sparkles /><p>집중 학습</p><h2>짧게 반복하고,<br />확실하게 기억하세요.</h2><Link className="button light" to="/certifications">학습 시작 <ArrowRight size={18} /></Link></div>
       <button className="hero-ring certification-trigger" type="button" disabled={!query.data} aria-haspopup="dialog" aria-expanded={certificationsOpen} aria-label={`학습 가능 자격증 ${certifications.length}개 보기`} onClick={() => setCertificationsOpen(true)}>
-        <b>{query.data ? certifications.length : '—'}</b><span>학습 가능 자격증</span><small>눌러서 목록 보기</small>
+        <b>{query.data ? certifications.length : '—'}</b><span>학습 가능 자격증</span>
       </button>
     </section>
     <div className="section-title"><h2>자격증 현황</h2><Link to="/certifications">전체 보기 →</Link></div>

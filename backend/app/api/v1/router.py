@@ -8,17 +8,31 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
+from app.classifiers.domain_classifier import classify_questions
+from app.classifiers.domain_classifier import report as classification_report
 from app.core.config import Settings, get_settings
 from app.db.base import utcnow
 from app.db.session import get_db
 from app.importers.jsonl import import_jsonl
-from app.models.entities import (AppSetting, Certification, Domain, ImportJob, MockExam, MockExamQuestion, Question, QuestionAnswerVersion, QuestionExplanation, QuestionReport, StudyAttempt, WrongNote)
+from app.models.entities import (
+    AppSetting,
+    Certification,
+    Domain,
+    ImportJob,
+    MockExam,
+    MockExamQuestion,
+    Question,
+    QuestionAnswerVersion,
+    QuestionExplanation,
+    QuestionReport,
+    StudyAttempt,
+    WrongNote,
+)
 from app.repositories.exams import ExamRepository
 from app.schemas.api import *  # noqa: F403
-from app.services.ai import AIUnavailableError, build_ai_adapter
+from app.services.ai import AIOutputError, AIUnavailableError, build_ai_adapter
 from app.services.allocation import allocate_by_domain
 from app.services.scoring import percentage, scaled_score, score_answer
-from app.classifiers.domain_classifier import classify_questions, report as classification_report
 
 router = APIRouter()
 Db = Annotated[Session, Depends(get_db)]
@@ -389,12 +403,34 @@ def explanation(question_id: int, db: Db, language: str = "ko") -> QuestionExpla
 
 @router.post("/questions/{question_id}/explanation/generate", response_model=ExplanationOut)
 def generate_explanation(question_id: int, payload: ExplanationGenerate, db: Db, settings: Settings = Depends(get_settings)) -> QuestionExplanation:
-    cached = db.scalar(select(QuestionExplanation).where(QuestionExplanation.question_id == question_id, QuestionExplanation.language == payload.language, QuestionExplanation.generation_status == "complete"))
-    if cached: return cached
+    existing = db.scalar(select(QuestionExplanation).where(QuestionExplanation.question_id == question_id, QuestionExplanation.language == payload.language))
+    if existing and existing.generation_status == "complete": return existing
     question = get_question(db, question_id); answers = current_answers(question)
-    try: data = build_ai_adapter(settings).explain({"question": question.question_en, "choices": {c.choice_key: c.text_en for c in question.choices}, "verified_answers": answers}, payload.language)
-    except AIUnavailableError as exc: raise HTTPException(503, str(exc)) from exc
-    item = QuestionExplanation(question_id=question_id, language=payload.language, correct_answer_summary=data["correct_answer_summary"], core_reason=data["core_reason"], keywords_json=data["keywords"], choice_analysis_json=data["choice_analysis"], related_concepts=data["related_concepts"], exam_traps=data["exam_traps"], memory_summary=data["memory_summary"], model_name=settings.openai_explanation_model or settings.openai_model)
+    explanation_input = {
+        "question": {"ko": question.question_ko, "en": question.question_en},
+        "choices": {
+            choice.choice_key: {"ko": choice.text_ko, "en": choice.text_en}
+            for choice in question.choices
+        },
+        "verified_answers": answers,
+        "required_answer_count": question.required_answer_count,
+    }
+    try:
+        data = build_ai_adapter(settings).explain(explanation_input, payload.language)
+    except AIUnavailableError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except AIOutputError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    item = existing or QuestionExplanation(question_id=question_id, language=payload.language)
+    item.correct_answer_summary = data["correct_answer_summary"]
+    item.core_reason = data["core_reason"]
+    item.keywords_json = data["keywords"]
+    item.choice_analysis_json = data["choice_analysis"]
+    item.related_concepts = data["related_concepts"]
+    item.exam_traps = data["exam_traps"]
+    item.memory_summary = data["memory_summary"]
+    item.model_name = settings.openai_explanation_model or settings.openai_model
+    item.generation_status = "complete"
     db.add(item); db.commit(); return item
 
 

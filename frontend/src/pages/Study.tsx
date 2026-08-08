@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
-import type { Question, StudySession, Submission } from '../types';
+import type { Explanation, Question, StudySession, Submission } from '../types';
 import { ErrorState, Loading, PageHeader, Progress } from '../components/common';
 import { ReportModal } from '../components/ReportModal';
 
@@ -77,6 +77,9 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, comple
     mutationFn: () => endpoints.submitStudy(question!.id, sessionId, { selected_answers: selected }),
     onSuccess: setResult,
   });
+  const explanation = useMutation({
+    mutationFn: () => endpoints.generateExplanation(question!.id),
+  });
   const moveNext = async (finish = false) => {
     setMovingNext(true);
     try { await (finish ? onComplete() : onNext()); } finally { setMovingNext(false); }
@@ -120,10 +123,12 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, comple
           </label>;
         })}
       </fieldset>
-      {result && <div className={result.is_correct ? 'feedback success' : 'feedback danger'} role="status">
-        <b>{result.is_correct ? '정답입니다!' : '아쉬워요. 다시 기억해 두세요.'}</b>
-        <p>{result.explanation?.core_reason ?? '정답과 선택지를 비교해 보세요.'}</p>
+      {result && <div className={`feedback ${result.is_correct ? 'success' : 'danger'}`} role="status">
+        <div><b>{result.is_correct ? '정답입니다!' : '아쉬워요. 다시 기억해 두세요.'}</b><p>{result.explanation?.core_reason ?? '정답과 선택지를 비교해 보세요.'}</p></div>
+        <button className="ai-explanation-button" type="button" disabled={explanation.isPending || Boolean(explanation.data)} onClick={() => explanation.mutate()}>{explanation.isPending ? '생성 중…' : explanation.data ? '해설 생성 완료' : 'AI 해설'}</button>
       </div>}
+      {explanation.data && <ExplanationCard explanation={explanation.data} question={question} selected={selected} correctAnswers={result?.correct_answers ?? []} />}
+      {explanation.isError && <div className="ai-explanation-error" role="alert"><b>AI 해설을 생성하지 못했습니다.</b><span>{explanation.error.message}</span><button type="button" onClick={() => explanation.mutate()}>다시 시도</button></div>}
       <div className="actions">
         <button className="button secondary" type="button" onClick={() => setReportOpen(true)}>문제 신고</button>
         {!result
@@ -135,4 +140,21 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, comple
     </section>
     {reportOpen && <ReportModal questionId={question.id} onClose={() => setReportOpen(false)} />}
   </>;
+}
+
+function ExplanationCard({ explanation, question, selected, correctAnswers }: {
+  explanation: Explanation;
+  question: Question;
+  selected: string[];
+  correctAnswers: string[];
+}) {
+  return <section className="ai-explanation" aria-labelledby="ai-explanation-title">
+    <header><div><span>AI GENERATED</span><h3 id="ai-explanation-title">AI 해설</h3></div>{explanation.keywords_json.length > 0 && <div className="explanation-keywords">{explanation.keywords_json.map(keyword => <em key={keyword}>{keyword}</em>)}</div>}</header>
+    <div className="explanation-summary"><strong>핵심 해설</strong><p>{explanation.core_reason}</p><small>{explanation.correct_answer_summary}</small></div>
+    <div className="choice-analysis"><h4>선택지별 설명</h4>{question.choices.map(choice => <article key={choice.id} className={correctAnswers.includes(choice.id) ? 'answer-correct' : selected.includes(choice.id) ? 'answer-selected' : ''}>
+      <b>{choice.id}</b><div><span>{correctAnswers.includes(choice.id) ? '정답' : selected.includes(choice.id) ? '내가 고른 오답' : '다른 선택지'}</span><p>{explanation.choice_analysis_json[choice.id] ?? '이 선택지에 대한 해설이 없습니다.'}</p></div>
+    </article>)}</div>
+    <div className="explanation-notes"><div><strong>시험 포인트</strong><p>{explanation.exam_traps}</p></div><div><strong>함께 기억할 개념</strong><p>{explanation.related_concepts}</p></div></div>
+    <footer><strong>한 줄 암기</strong><span>{explanation.memory_summary}</span></footer>
+  </section>;
 }

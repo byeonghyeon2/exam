@@ -28,6 +28,7 @@ describe('Dashboard', () => {
     expect(screen.getByText('2')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '솔루션스 아키텍트' })).toBeInTheDocument();
     expect(screen.queryByText('학습 가능 문제')).not.toBeInTheDocument();
+    expect(screen.queryByText('눌러서 목록 보기')).not.toBeInTheDocument();
   });
 
   it('opens the available certification list from the count', async () => {
