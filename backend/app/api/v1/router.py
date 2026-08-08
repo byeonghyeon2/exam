@@ -50,30 +50,27 @@ def health() -> dict[str, str]: return {"status": "ok"}
 
 @router.get("/certifications", response_model=list[CertificationOut])
 def certifications(db: Db) -> list[Certification]:
-    return list(db.scalars(select(Certification).where(Certification.is_active.is_(True), Certification.certification_code == "DEA-C01").order_by(Certification.certification_code)))
+    return list(db.scalars(select(Certification).where(Certification.is_active.is_(True)).order_by(Certification.certification_code)))
 
 
 @router.get("/certifications/{code}", response_model=CertificationOut)
 def certification(code: str, db: Db) -> Certification:
-    if code != "DEA-C01": raise HTTPException(404, "Certification is disabled in phase 1")
     item = ExamRepository(db).certification(code)
-    if not item: raise HTTPException(404, "Certification not found")
+    if not item or not item.is_active: raise HTTPException(404, "Certification not found")
     return item
 
 
 @router.get("/certifications/{code}/domains", response_model=list[DomainOut])
 def domains(code: str, db: Db) -> list[Domain]:
-    if code != "DEA-C01": raise HTTPException(404, "Certification is disabled in phase 1")
     cert = ExamRepository(db).certification(code)
-    if not cert: raise HTTPException(404, "Certification not found")
+    if not cert or not cert.is_active: raise HTTPException(404, "Certification not found")
     return list(db.scalars(select(Domain).where(Domain.certification_id == cert.id, Domain.is_active.is_(True)).order_by(Domain.sort_order)))
 
 
 @router.post("/study/sessions", response_model=StudySessionOut, status_code=201)
 def create_study(payload: StudySessionCreate, db: Db) -> StudySessionOut:
-    if payload.certification_code != "DEA-C01": raise HTTPException(409, "Only DEA-C01 is enabled in phase 1")
     repo = ExamRepository(db); cert = repo.certification(payload.certification_code)
-    if not cert: raise HTTPException(404, "Certification not found")
+    if not cert or not cert.is_active: raise HTTPException(404, "Certification not found")
     domain = repo.domain_by_code(cert.id, payload.domain_code) if payload.domain_code else None
     if payload.domain_code and not domain: raise HTTPException(404, "Domain not found")
     pool = repo.eligible_questions(cert.id, domain.id if domain else None)
