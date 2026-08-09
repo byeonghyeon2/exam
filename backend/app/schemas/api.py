@@ -27,6 +27,7 @@ class UserOut(ORMModel):
     username: str
     role: Literal["user", "admin"]
     is_active: bool
+    password_managed_by_environment: bool = False
     created_at: datetime
     last_login_at: datetime | None
 

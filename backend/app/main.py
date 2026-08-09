@@ -1,3 +1,4 @@
+import logging
 import time
 from uuid import uuid4
 
@@ -10,8 +11,16 @@ from app.api.v1.router import router
 from app.core.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 app = FastAPI(title=settings.app_name, debug=settings.app_debug)
-app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.frontend_origin],
+    allow_origin_regex=r"https?://(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.middleware("http")
@@ -19,6 +28,7 @@ async def request_context(request: Request, call_next):
     request_id = request.headers.get("x-request-id", str(uuid4())); started = time.perf_counter()
     try: response = await call_next(request)
     except Exception:
+        logger.exception("Unhandled request error", extra={"request_id": request_id})
         response = JSONResponse(status_code=500, content={"detail": "Internal server error", "request_id": request_id})
     response.headers["x-request-id"] = request_id; response.headers["x-response-time-ms"] = f"{(time.perf_counter()-started)*1000:.2f}"
     return response

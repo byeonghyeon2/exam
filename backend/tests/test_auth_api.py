@@ -10,6 +10,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.entities import Certification, Domain, Question, User, WrongNote
+from app.services.auth import hash_password
 
 
 def test_admin_bootstrap_login_and_managed_user_access() -> None:
@@ -43,16 +44,24 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
     app.dependency_overrides[get_settings] = lambda: settings
     try:
         with TestClient(app) as client:
+            cors = client.options(
+                "/api/v1/certifications",
+                headers={"Origin": "http://192.168.0.10:5173", "Access-Control-Request-Method": "GET"},
+            )
+            assert cors.status_code == 200
+            assert cors.headers["access-control-allow-origin"] == "http://192.168.0.10:5173"
             assert client.get("/api/v1/certifications").status_code == 401
             logged_in = client.post("/api/v1/auth/login", json={"username": "admin", "password": "strong-admin-password"})
             assert logged_in.status_code == 200
             assert logged_in.json()["role"] == "admin"
+            assert logged_in.json()["password_managed_by_environment"] is True
             assert logged_in.cookies.get("certflow_session")
 
             created = client.post("/api/v1/admin/users", json={"username": "learner", "password": "learner-password", "role": "user"})
             assert created.status_code == 201
             assert created.json()["username"] == "learner"
-            assert client.get("/api/v1/admin/users").status_code == 200
+            assert [user["username"] for user in client.get("/api/v1/admin/users").json()] == ["learner"]
+            assert client.post("/api/v1/admin/users", json={"username": "second-admin", "password": "another-password", "role": "admin"}).status_code == 409
 
             with session_factory() as db:
                 admin_user = db.scalar(select(User).where(User.username == "admin"))
@@ -61,9 +70,23 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
                 learner_question = db.scalar(select(Question).where(Question.question_uid == "LEARNER-WRONG"))
                 db.add_all([WrongNote(user_id=admin_user.id, question_id=admin_question.id, wrong_count=1), WrongNote(user_id=learner_user.id, question_id=learner_question.id, wrong_count=1)]); db.commit()
 
+            assert client.patch(f"/api/v1/admin/users/{logged_in.json()['id']}", json={"password": "database-password"}).status_code == 409
             assert client.post("/api/v1/auth/logout").status_code == 204
+            with session_factory() as db:
+                admin_user = db.scalar(select(User).where(User.username == "admin"))
+                admin_user.password_hash = hash_password("database-password")
+                admin_user.is_active = False
+                db.commit()
+            environment_admin = client.post("/api/v1/auth/login", json={"username": "admin", "password": "strong-admin-password"})
+            assert environment_admin.status_code == 200
+            with session_factory() as db:
+                assert db.scalar(select(User.is_active).where(User.username == "admin")) is True
+            assert client.post("/api/v1/auth/logout").status_code == 204
+            assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "database-password"}).status_code == 401
+
             learner_login = client.post("/api/v1/auth/login", json={"username": "learner", "password": "learner-password"})
             assert learner_login.status_code == 200
+            assert learner_login.json()["password_managed_by_environment"] is False
             assert client.get("/api/v1/certifications").status_code == 200
             assert client.get("/api/v1/admin/users").status_code == 403
             assert [note["question_uid"] for note in client.get("/api/v1/wrong-notes").json()] == ["LEARNER-WRONG"]

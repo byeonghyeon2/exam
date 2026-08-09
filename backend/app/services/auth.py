@@ -63,7 +63,7 @@ def find_session(db: Session, raw_token: str) -> tuple[AuthSession, User] | None
 def bootstrap_admin(db: Session, settings: Settings) -> bool:
     if db.scalar(select(User.id).where(User.role == "admin")) is not None:
         return False
-    password = settings.initial_admin_password or settings.admin_access_key
+    password = settings.initial_admin_password
     if not password:
         return False
     db.add(User(username=settings.initial_admin_username.strip().lower(), password_hash=hash_password(password), role="admin"))
