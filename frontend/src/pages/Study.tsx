@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { LoaderCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
@@ -80,6 +81,17 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, comple
   const explanation = useMutation({
     mutationFn: () => endpoints.generateExplanation(question!.id),
   });
+  useEffect(() => {
+    if (!explanation.isPending) return;
+    const previousOverflow = document.body.style.overflow;
+    const blockKeyboard = (event: KeyboardEvent) => event.preventDefault();
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', blockKeyboard, true);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', blockKeyboard, true);
+    };
+  }, [explanation.isPending]);
   const moveNext = async (finish = false) => {
     setMovingNext(true);
     try { await (finish ? onComplete() : onNext()); } finally { setMovingNext(false); }
@@ -139,6 +151,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, comple
       {completeError && <ErrorState error={completeError} />}
     </section>
     {reportOpen && <ReportModal questionId={question.id} onClose={() => setReportOpen(false)} />}
+    {explanation.isPending && <div className="grading-overlay ai-loading-overlay" role="alertdialog" aria-modal="true" aria-live="assertive" tabIndex={-1} autoFocus><LoaderCircle className="spin"/><strong>AI 해설 생성 중입니다.</strong><span>문제와 선택지를 분석하고 있습니다. 잠시만 기다려 주세요.</span><div className="loading-bar" aria-hidden="true"><i/></div></div>}
   </>;
 }
 

@@ -70,13 +70,16 @@ describe('Study', () => {
   it('generates and displays an AI explanation after grading', async () => {
     vi.spyOn(endpoints, 'study').mockResolvedValue(session);
     vi.spyOn(endpoints, 'submitStudy').mockResolvedValue({ is_correct: false, correct_answers: ['C'] });
-    const generate = vi.spyOn(endpoints, 'generateExplanation').mockResolvedValue({
+    const generatedExplanation = {
       correct_answer_summary: 'C가 검증된 정답입니다.',
       core_reason: 'C만 요구사항을 충족합니다.',
       keywords_json: ['AWS', '데이터'],
       choice_analysis_json: { A: 'A는 다른 기능을 설명합니다.', B: 'B는 조건이 부족합니다.', C: 'C가 요구사항에 맞습니다.', D: 'D는 반대 기능입니다.' },
       related_concepts: '관련 개념', exam_traps: '서비스 이름을 구분합니다.', memory_summary: '요구사항과 기능을 연결합니다.',
-    });
+    };
+    let finishGeneration!: (value: typeof generatedExplanation) => void;
+    const generation = new Promise<typeof generatedExplanation>(resolve => { finishGeneration = resolve; });
+    const generate = vi.spyOn(endpoints, 'generateExplanation').mockReturnValue(generation);
     const user = userEvent.setup();
     renderStudy();
 
@@ -85,7 +88,12 @@ describe('Study', () => {
     await user.click(await screen.findByRole('button', { name: 'AI 해설' }));
 
     expect(generate).toHaveBeenCalledWith(10);
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('AI 해설 생성 중입니다.');
+    expect(document.body).toHaveStyle({ overflow: 'hidden' });
+    finishGeneration(generatedExplanation);
     expect(await screen.findByRole('heading', { name: 'AI 해설' })).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(document.body).not.toHaveStyle({ overflow: 'hidden' });
     expect(screen.getByText('C만 요구사항을 충족합니다.')).toBeInTheDocument();
     expect(screen.getByText('A는 다른 기능을 설명합니다.')).toBeInTheDocument();
     expect(screen.getByText('내가 고른 오답')).toBeInTheDocument();
