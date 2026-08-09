@@ -27,6 +27,8 @@ from app.models.entities import (
     QuestionExplanation,
     QuestionReport,
     StudyAttempt,
+    StudySessionRecord,
+    User,
     WrongNote,
 )
 from app.repositories.exams import ExamRepository
@@ -37,7 +39,18 @@ from app.services.scoring import percentage, scaled_score, score_answer
 
 router = APIRouter(dependencies=[Depends(current_user)])
 Db = Annotated[Session, Depends(get_db)]
-_study_sessions: dict[str, list[int]] = {}
+CurrentUser = Annotated[User | None, Depends(current_user)]
+
+
+def owner_id(user: User | None) -> int:
+    return user.id if user is not None else 0
+
+
+def get_study_record(db: Session, session_id: str, user: User | None) -> StudySessionRecord:
+    record = db.scalar(select(StudySessionRecord).where(StudySessionRecord.session_id == session_id, StudySessionRecord.user_id == owner_id(user)))
+    if record is None:
+        raise HTTPException(404, "Study session not found")
+    return record
 
 
 def current_answers(question: Question) -> list[str]:
@@ -74,7 +87,7 @@ def domains(code: str, db: Db) -> list[Domain]:
 
 
 @router.post("/study/sessions", response_model=StudySessionOut, status_code=201)
-def create_study(payload: StudySessionCreate, db: Db) -> StudySessionOut:
+def create_study(payload: StudySessionCreate, db: Db, user: CurrentUser) -> StudySessionOut:
     repo = ExamRepository(db); cert = repo.certification(payload.certification_code)
     if not cert or not cert.is_active: raise HTTPException(404, "Certification not found")
     domain = repo.domain_by_code(cert.id, payload.domain_code) if payload.domain_code else None
@@ -84,17 +97,18 @@ def create_study(payload: StudySessionCreate, db: Db) -> StudySessionOut:
     question_count = len(pool) if payload.question_count is None else payload.question_count
     if not pool: raise HTTPException(409, "No eligible questions in the selected domain")
     if len(pool) < question_count: raise HTTPException(409, "Insufficient verified questions")
-    session_id = str(uuid4()); ids = [q.id for q in pool[:question_count]]; _study_sessions[session_id] = ids
+    session_id = str(uuid4()); ids = [q.id for q in pool[:question_count]]
+    db.add(StudySessionRecord(session_id=session_id, user_id=owner_id(user), certification_id=cert.id, question_ids_json=ids))
+    db.commit()
     return StudySessionOut(id=session_id, question_ids=ids)
 
 
 @router.get("/study/sessions/{session_id}", response_model=None)
-def study_session(session_id: str, db: Db) -> dict[str, Any]:
-    if session_id not in _study_sessions: raise HTTPException(404, "Study session not found")
-    ids = _study_sessions[session_id]
-    attempts = list(db.scalars(select(StudyAttempt).where(StudyAttempt.session_id == session_id)))
+def study_session(session_id: str, db: Db, user: CurrentUser) -> dict[str, Any]:
+    record = get_study_record(db, session_id, user); ids = record.question_ids_json
+    attempts = list(db.scalars(select(StudyAttempt).where(StudyAttempt.session_id == session_id, StudyAttempt.user_id == owner_id(user))))
     attempted = {attempt.question_id for attempt in attempts}
-    next_id = next((question_id for question_id in ids if question_id not in attempted), None)
+    next_id = next((question_id for question_id in ids if question_id not in attempted), None) if record.status == "in_progress" else None
     question = QuestionOut.model_validate(get_question(db, next_id)) if next_id is not None else None
     return {
         "id": session_id,
@@ -107,62 +121,71 @@ def study_session(session_id: str, db: Db) -> dict[str, Any]:
             "answered_count": len(attempted),
             "correct_count": sum(attempt.is_correct for attempt in attempts),
             "wrong_count": sum(not attempt.is_correct for attempt in attempts),
-            "finalized": bool(attempts) and all(attempt.wrong_note_processed for attempt in attempts),
+            "finalized": record.status in {"completed", "partial_saved"},
         },
     }
 
 
 @router.get("/study/sessions/{session_id}/next", response_model=QuestionOut)
-def next_study(session_id: str, db: Db) -> Question:
-    ids = _study_sessions.get(session_id)
-    if not ids: raise HTTPException(404, "No remaining question")
-    attempted = set(db.scalars(select(StudyAttempt.question_id).where(StudyAttempt.session_id == session_id)))
+def next_study(session_id: str, db: Db, user: CurrentUser) -> Question:
+    record = get_study_record(db, session_id, user); ids = record.question_ids_json
+    if record.status != "in_progress": raise HTTPException(409, "Study session is no longer active")
+    attempted = set(db.scalars(select(StudyAttempt.question_id).where(StudyAttempt.session_id == session_id, StudyAttempt.user_id == owner_id(user))))
     next_id = next((qid for qid in ids if qid not in attempted), None)
     if next_id is None: raise HTTPException(404, "No remaining question")
     return get_question(db, next_id)
 
 
-def update_wrong_note(db: Session, question_id: int, correct: bool) -> None:
-    note = db.scalar(select(WrongNote).where(WrongNote.question_id == question_id))
+def update_wrong_note(db: Session, user_id: int, question_id: int, correct: bool) -> None:
+    note = db.scalar(select(WrongNote).where(WrongNote.user_id == user_id, WrongNote.question_id == question_id))
     if not correct:
         if note: note.wrong_count += 1; note.last_wrong_at = utcnow(); note.status = "active"
-        else: db.add(WrongNote(question_id=question_id, wrong_count=1))
+        else: db.add(WrongNote(user_id=user_id, question_id=question_id, wrong_count=1))
     elif note:
         note.correct_after_wrong_count += 1
 
 
+def finalize_study(db: Session, record: StudySessionRecord, attempts: list[StudyAttempt], status: str) -> dict[str, int | bool]:
+    user_id = record.user_id
+    for attempt in attempts:
+        if not attempt.wrong_note_processed:
+            update_wrong_note(db, user_id, attempt.question_id, attempt.is_correct)
+            attempt.wrong_note_processed = True
+    record.status = status; record.completed_at = utcnow(); db.commit()
+    correct_count = sum(attempt.is_correct for attempt in attempts)
+    return {"total_questions": len(record.question_ids_json), "answered_count": len(attempts), "correct_count": correct_count, "wrong_count": len(attempts) - correct_count, "finalized": True}
+
+
 @router.post("/study/sessions/{session_id}/complete")
-def complete_study(session_id: str, db: Db) -> dict[str, int | bool]:
-    ids = _study_sessions.get(session_id)
-    if not ids:
-        raise HTTPException(404, "Study session not found")
-    attempts = list(db.scalars(select(StudyAttempt).where(StudyAttempt.session_id == session_id)))
+def complete_study(session_id: str, db: Db, user: CurrentUser) -> dict[str, int | bool]:
+    record = get_study_record(db, session_id, user); ids = record.question_ids_json
+    attempts = list(db.scalars(select(StudyAttempt).where(StudyAttempt.session_id == session_id, StudyAttempt.user_id == owner_id(user))))
     attempted_ids = {attempt.question_id for attempt in attempts}
     if len(attempted_ids) != len(ids) or not set(ids) <= attempted_ids:
         raise HTTPException(409, "Complete every assigned question before finishing the session")
-    for attempt in attempts:
-        if attempt.wrong_note_processed:
-            continue
-        update_wrong_note(db, attempt.question_id, attempt.is_correct)
-        attempt.wrong_note_processed = True
-    db.commit()
+    return finalize_study(db, record, attempts, "completed")
+
+
+@router.post("/study/sessions/{session_id}/leave")
+def leave_study(session_id: str, payload: StudyLeaveRequest, db: Db, user: CurrentUser) -> dict[str, int | bool]:
+    record = get_study_record(db, session_id, user)
+    if record.status != "in_progress": raise HTTPException(409, "Study session is no longer active")
+    attempts = list(db.scalars(select(StudyAttempt).where(StudyAttempt.session_id == session_id, StudyAttempt.user_id == owner_id(user)).order_by(StudyAttempt.id)))
+    if payload.save_results:
+        if not attempts: raise HTTPException(409, "Answer at least one question before saving results")
+        return finalize_study(db, record, attempts, "partial_saved")
+    record.status = "abandoned"; record.completed_at = utcnow(); db.commit()
     correct_count = sum(attempt.is_correct for attempt in attempts)
-    return {
-        "total_questions": len(ids),
-        "answered_count": len(attempted_ids),
-        "correct_count": correct_count,
-        "wrong_count": len(ids) - correct_count,
-        "finalized": True,
-    }
+    return {"total_questions": len(record.question_ids_json), "answered_count": len(attempts), "correct_count": correct_count, "wrong_count": len(attempts) - correct_count, "finalized": False}
 
 
 @router.get("/study/history", response_model=list[StudyHistoryOut])
-def study_history(db: Db) -> list[StudyHistoryOut]:
+def study_history(db: Db, user: CurrentUser) -> list[StudyHistoryOut]:
     rows = db.execute(
         select(StudyAttempt, Question, Certification)
         .join(Question, Question.id == StudyAttempt.question_id)
         .join(Certification, Certification.id == Question.certification_id)
-        .where(StudyAttempt.wrong_note_processed.is_(True))
+        .where(StudyAttempt.user_id == owner_id(user), StudyAttempt.wrong_note_processed.is_(True))
         .order_by(StudyAttempt.attempted_at.desc(), StudyAttempt.id.desc())
     ).all()
     grouped: dict[str, dict[str, Any]] = {}
@@ -191,11 +214,12 @@ def study_history(db: Db) -> list[StudyHistoryOut]:
 
 
 @router.post("/study/history/{session_id}/retry", response_model=StudySessionOut, status_code=201)
-def retry_study_history(session_id: str, db: Db) -> StudySessionOut:
+def retry_study_history(session_id: str, db: Db, user: CurrentUser) -> StudySessionOut:
     question_ids = list(db.scalars(
         select(StudyAttempt.question_id)
         .where(
             StudyAttempt.session_id == session_id,
+            StudyAttempt.user_id == owner_id(user),
             StudyAttempt.wrong_note_processed.is_(True),
             StudyAttempt.is_correct.is_(False),
         )
@@ -203,22 +227,23 @@ def retry_study_history(session_id: str, db: Db) -> StudySessionOut:
     ))
     if not question_ids:
         raise HTTPException(404, "Completed study session with wrong answers not found")
-    retry_session_id = str(uuid4())
-    _study_sessions[retry_session_id] = question_ids
+    first_question = db.get(Question, question_ids[0]); retry_session_id = str(uuid4())
+    db.add(StudySessionRecord(session_id=retry_session_id, user_id=owner_id(user), certification_id=first_question.certification_id, question_ids_json=question_ids)); db.commit()
     return StudySessionOut(id=retry_session_id, question_ids=question_ids)
 
 
-def rebuild_wrong_note(db: Session, question_id: int) -> None:
+def rebuild_wrong_note(db: Session, user_id: int, question_id: int) -> None:
     attempts = list(db.scalars(
         select(StudyAttempt)
         .where(
             StudyAttempt.question_id == question_id,
+            StudyAttempt.user_id == user_id,
             StudyAttempt.wrong_note_processed.is_(True),
         )
         .order_by(StudyAttempt.attempted_at, StudyAttempt.id)
     ))
     wrong_attempts = [attempt for attempt in attempts if not attempt.is_correct]
-    note = db.scalar(select(WrongNote).where(WrongNote.question_id == question_id))
+    note = db.scalar(select(WrongNote).where(WrongNote.user_id == user_id, WrongNote.question_id == question_id))
     if not wrong_attempts:
         if note:
             db.delete(note)
@@ -226,7 +251,7 @@ def rebuild_wrong_note(db: Session, question_id: int) -> None:
     first_wrong_index = attempts.index(wrong_attempts[0])
     correct_after_wrong = sum(attempt.is_correct for attempt in attempts[first_wrong_index + 1:])
     if not note:
-        note = WrongNote(question_id=question_id)
+        note = WrongNote(user_id=user_id, question_id=question_id)
         db.add(note)
     note.wrong_count = len(wrong_attempts)
     note.correct_after_wrong_count = correct_after_wrong
@@ -235,10 +260,11 @@ def rebuild_wrong_note(db: Session, question_id: int) -> None:
 
 
 @router.delete("/study/history/{session_id}")
-def delete_study_history(session_id: str, db: Db) -> dict[str, int]:
+def delete_study_history(session_id: str, db: Db, user: CurrentUser) -> dict[str, int]:
     attempts = list(db.scalars(
         select(StudyAttempt).where(
             StudyAttempt.session_id == session_id,
+            StudyAttempt.user_id == owner_id(user),
             StudyAttempt.wrong_note_processed.is_(True),
         )
     ))
@@ -249,24 +275,26 @@ def delete_study_history(session_id: str, db: Db) -> dict[str, int]:
         db.delete(attempt)
     db.flush()
     for question_id in question_ids:
-        rebuild_wrong_note(db, question_id)
+        rebuild_wrong_note(db, owner_id(user), question_id)
+    record = db.get(StudySessionRecord, session_id)
+    if record and record.user_id == owner_id(user): db.delete(record)
     db.commit()
-    _study_sessions.pop(session_id, None)
     return {"deleted_count": len(attempts)}
 
 
 @router.post("/study/questions/{question_id}/submit", response_model=AnswerResult)
-def submit_study(question_id: int, payload: SubmitAnswer, db: Db, session_id: str = Query(...)) -> AnswerResult:
-    if question_id not in _study_sessions.get(session_id, []): raise HTTPException(409, "Question is not assigned to session")
-    existing = db.scalar(select(StudyAttempt).where(StudyAttempt.session_id == session_id, StudyAttempt.question_id == question_id))
+def submit_study(question_id: int, payload: SubmitAnswer, db: Db, user: CurrentUser, session_id: str = Query(...)) -> AnswerResult:
+    record = get_study_record(db, session_id, user)
+    if record.status != "in_progress" or question_id not in record.question_ids_json: raise HTTPException(409, "Question is not assigned to an active session")
+    existing = db.scalar(select(StudyAttempt).where(StudyAttempt.session_id == session_id, StudyAttempt.user_id == owner_id(user), StudyAttempt.question_id == question_id))
     if existing: raise HTTPException(409, "Question already answered in this session")
     question = get_question(db, question_id); answers = current_answers(question); correct = score_answer(payload.selected_answers, answers)
-    db.add(StudyAttempt(session_id=session_id, question_id=question_id, selected_answers_json=payload.selected_answers, is_correct=correct)); db.commit()
+    db.add(StudyAttempt(user_id=owner_id(user), session_id=session_id, question_id=question_id, selected_answers_json=payload.selected_answers, is_correct=correct)); db.commit()
     return AnswerResult(correct=correct, selected_answers=payload.selected_answers, correct_answers=answers)
 
 
 @router.post("/mock-exams", status_code=201)
-def create_mock(payload: MockExamCreate, db: Db) -> dict[str, Any]:
+def create_mock(payload: MockExamCreate, db: Db, user: CurrentUser) -> dict[str, Any]:
     if payload.certification_code != "DEA-C01": raise HTTPException(409, "Only DEA-C01 is enabled in phase 1")
     repo = ExamRepository(db); cert = repo.certification(payload.certification_code)
     if not cert: raise HTTPException(404, "Certification not found")
@@ -278,24 +306,24 @@ def create_mock(payload: MockExamCreate, db: Db) -> dict[str, Any]:
         readiness = mock_exam_readiness(db)
         raise HTTPException(409, {"message": str(exc), "readiness": readiness}) from exc
     duration = payload.duration_minutes or cert.default_duration_minutes; now = utcnow()
-    exam = MockExam(certification_id=cert.id, question_count=count, duration_minutes=duration, expires_at=now + timedelta(minutes=duration), passing_score=cert.passing_score)
+    exam = MockExam(user_id=owner_id(user), certification_id=cert.id, question_count=count, duration_minutes=duration, expires_at=now + timedelta(minutes=duration), passing_score=cert.passing_score)
     exam.questions = [MockExamQuestion(question_id=q.id, question_order=i + 1) for i, q in enumerate(allocation.questions)]; db.add(exam); db.commit()
     return {"id": exam.id, "status": exam.status, "expires_at": exam.expires_at, "used_fallback": allocation.used_fallback}
 
 
-def get_exam(db: Session, exam_id: int) -> MockExam:
-    exam = db.scalar(select(MockExam).where(MockExam.id == exam_id).options(selectinload(MockExam.questions)))
+def get_exam(db: Session, exam_id: int, user: User | None) -> MockExam:
+    exam = db.scalar(select(MockExam).where(MockExam.id == exam_id, MockExam.user_id == owner_id(user)).options(selectinload(MockExam.questions)))
     if not exam: raise HTTPException(404, "Mock exam not found")
     return exam
 
 
 @router.get("/mock-exams/{exam_id}", response_model=None)
-def mock_exam(exam_id: int, db: Db) -> MockExam: return get_exam(db, exam_id)
+def mock_exam(exam_id: int, db: Db, user: CurrentUser) -> MockExam: return get_exam(db, exam_id, user)
 
 
 @router.get("/mock-exams/{exam_id}/questions", response_model=list[QuestionOut])
-def mock_questions(exam_id: int, db: Db) -> list[Question]:
-    exam = get_exam(db, exam_id); by_id = {q.id: q for q in db.scalars(select(Question).where(Question.id.in_([x.question_id for x in exam.questions])).options(selectinload(Question.choices)))}
+def mock_questions(exam_id: int, db: Db, user: CurrentUser) -> list[Question]:
+    exam = get_exam(db, exam_id, user); by_id = {q.id: q for q in db.scalars(select(Question).where(Question.id.in_([x.question_id for x in exam.questions])).options(selectinload(Question.choices)))}
     return [by_id[x.question_id] for x in exam.questions]
 
 
@@ -305,40 +333,40 @@ def ensure_open(exam: MockExam) -> None:
 
 
 @router.put("/mock-exams/{exam_id}/answers/{question_id}")
-def save_answer(exam_id: int, question_id: int, payload: ExamAnswerUpdate, db: Db) -> dict[str, str]:
-    exam = get_exam(db, exam_id); ensure_open(exam); item = next((x for x in exam.questions if x.question_id == question_id), None)
+def save_answer(exam_id: int, question_id: int, payload: ExamAnswerUpdate, db: Db, user: CurrentUser) -> dict[str, str]:
+    exam = get_exam(db, exam_id, user); ensure_open(exam); item = next((x for x in exam.questions if x.question_id == question_id), None)
     if not item: raise HTTPException(404, "Question not assigned to exam")
     item.selected_answers_json = payload.selected_answers; item.answered_at = utcnow(); db.commit(); return {"status": "saved"}
 
 
 @router.put("/mock-exams/{exam_id}/review-marks/{question_id}")
-def mark_review(exam_id: int, question_id: int, payload: ReviewMarkUpdate, db: Db) -> dict[str, bool]:
-    exam = get_exam(db, exam_id); ensure_open(exam); item = next((x for x in exam.questions if x.question_id == question_id), None)
+def mark_review(exam_id: int, question_id: int, payload: ReviewMarkUpdate, db: Db, user: CurrentUser) -> dict[str, bool]:
+    exam = get_exam(db, exam_id, user); ensure_open(exam); item = next((x for x in exam.questions if x.question_id == question_id), None)
     if not item: raise HTTPException(404, "Question not assigned to exam")
     item.is_marked_for_review = payload.marked; db.commit(); return {"marked": payload.marked}
 
 
 @router.post("/mock-exams/{exam_id}/submit")
-def submit_mock(exam_id: int, db: Db) -> dict[str, Any]:
-    exam = get_exam(db, exam_id)
+def submit_mock(exam_id: int, db: Db, user: CurrentUser) -> dict[str, Any]:
+    exam = get_exam(db, exam_id, user)
     if exam.status != "in_progress": raise HTTPException(409, "Exam is already submitted")
     correct_count = 0
     for item in exam.questions:
-        question = get_question(db, item.question_id); item.is_correct = score_answer(item.selected_answers_json or [], current_answers(question)); correct_count += int(item.is_correct); update_wrong_note(db, item.question_id, item.is_correct)
+        question = get_question(db, item.question_id); item.is_correct = score_answer(item.selected_answers_json or [], current_answers(question)); correct_count += int(item.is_correct); update_wrong_note(db, owner_id(user), item.question_id, item.is_correct)
     exam.raw_score = percentage(correct_count, exam.question_count); exam.scaled_score = scaled_score(correct_count, exam.question_count); exam.result = "pass" if (exam.scaled_score if exam.passing_score > 100 else exam.raw_score) >= exam.passing_score else "fail"; exam.status = "submitted"; exam.submitted_at = utcnow(); db.commit()
     return {"correct_count": correct_count, "total": exam.question_count, "total_count": exam.question_count, "raw_score": exam.raw_score, "scaled_score": exam.scaled_score, "passing_score": exam.passing_score, "result": exam.result}
 
 
 @router.get("/mock-exams/{exam_id}/result")
-def mock_result(exam_id: int, db: Db) -> dict[str, Any]:
-    exam = get_exam(db, exam_id)
+def mock_result(exam_id: int, db: Db, user: CurrentUser) -> dict[str, Any]:
+    exam = get_exam(db, exam_id, user)
     if exam.status != "submitted": raise HTTPException(409, "Exam is not submitted")
     return {"raw_score": exam.raw_score, "scaled_score": exam.scaled_score, "passing_score": exam.passing_score, "result": exam.result}
 
 
 @router.get("/mock-exams/{exam_id}/review/{question_id}")
-def review_question(exam_id: int, question_id: int, db: Db) -> dict[str, Any]:
-    exam = get_exam(db, exam_id)
+def review_question(exam_id: int, question_id: int, db: Db, user: CurrentUser) -> dict[str, Any]:
+    exam = get_exam(db, exam_id, user)
     if exam.status != "submitted": raise HTTPException(409, "Exam is not submitted")
     item = next((x for x in exam.questions if x.question_id == question_id), None)
     if not item: raise HTTPException(404, "Question not assigned")
@@ -346,8 +374,8 @@ def review_question(exam_id: int, question_id: int, db: Db) -> dict[str, Any]:
 
 
 @router.get("/wrong-notes", response_model=list[WrongNoteOut])
-def wrong_notes(db: Db, status_filter: str | None = Query(None, alias="status")) -> list[WrongNoteOut]:
-    stmt = select(WrongNote, Question).join(Question, Question.id == WrongNote.question_id).order_by(WrongNote.last_wrong_at.desc())
+def wrong_notes(db: Db, user: CurrentUser, status_filter: str | None = Query(None, alias="status")) -> list[WrongNoteOut]:
+    stmt = select(WrongNote, Question).join(Question, Question.id == WrongNote.question_id).where(WrongNote.user_id == owner_id(user)).order_by(WrongNote.last_wrong_at.desc())
     if status_filter: stmt = stmt.where(WrongNote.status == status_filter)
     return [WrongNoteOut(
         question_id=note.question_id,
@@ -360,23 +388,23 @@ def wrong_notes(db: Db, status_filter: str | None = Query(None, alias="status"))
 
 
 @router.delete("/wrong-notes")
-def delete_wrong_notes(payload: WrongNoteDelete, db: Db) -> dict[str, int]:
-    notes = list(db.scalars(select(WrongNote).where(WrongNote.question_id.in_(set(payload.question_ids)))))
+def delete_wrong_notes(payload: WrongNoteDelete, db: Db, user: CurrentUser) -> dict[str, int]:
+    notes = list(db.scalars(select(WrongNote).where(WrongNote.user_id == owner_id(user), WrongNote.question_id.in_(set(payload.question_ids)))))
     for note in notes: db.delete(note)
     db.commit()
     return {"deleted_count": len(notes)}
 
 
 @router.post("/wrong-notes/{question_id}/review")
-def review_note(question_id: int, db: Db) -> dict[str, str]:
-    note = db.scalar(select(WrongNote).where(WrongNote.question_id == question_id))
+def review_note(question_id: int, db: Db, user: CurrentUser) -> dict[str, str]:
+    note = db.scalar(select(WrongNote).where(WrongNote.user_id == owner_id(user), WrongNote.question_id == question_id))
     if not note: raise HTTPException(404, "Wrong note not found")
     note.reviewed_at = utcnow(); note.status = "reviewing"; db.commit(); return {"status": note.status}
 
 
 @router.patch("/wrong-notes/{question_id}")
-def patch_note(question_id: int, payload: WrongNoteUpdate, db: Db) -> dict[str, str]:
-    note = db.scalar(select(WrongNote).where(WrongNote.question_id == question_id))
+def patch_note(question_id: int, payload: WrongNoteUpdate, db: Db, user: CurrentUser) -> dict[str, str]:
+    note = db.scalar(select(WrongNote).where(WrongNote.user_id == owner_id(user), WrongNote.question_id == question_id))
     if not note: raise HTTPException(404, "Wrong note not found")
     note.status = payload.status; db.commit(); return {"status": note.status}
 

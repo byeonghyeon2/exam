@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../api/queries';
+import { StudyExitGuardContext } from '../components/StudyExitGuard';
 import { Study } from '../pages/Study';
 
 const session = {
@@ -32,9 +33,9 @@ function renderStudy() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/study/session-1']}>
+      <StudyExitGuardContext.Provider value={{setGuard:vi.fn()}}><MemoryRouter initialEntries={['/study/session-1']}>
         <Routes><Route path="/study/:id" element={<Study />} /></Routes>
-      </MemoryRouter>
+      </MemoryRouter></StudyExitGuardContext.Provider>
     </QueryClientProvider>,
   );
 }

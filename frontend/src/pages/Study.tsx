@@ -6,6 +6,7 @@ import { endpoints } from '../api/queries';
 import type { Explanation, Question, StudySession, Submission } from '../types';
 import { ErrorState, Loading, PageHeader, Progress } from '../components/common';
 import { ReportModal } from '../components/ReportModal';
+import { useStudyExitGuard } from '../components/StudyExitGuard';
 
 const DEFAULT_STUDY_QUESTION_COUNT = 10;
 
@@ -13,6 +14,8 @@ export function Study() {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const { setGuard } = useStudyExitGuard();
+  const [currentAnswered, setCurrentAnswered] = useState(false);
   const certificationCode = new URLSearchParams(location.search).get('cert') ?? 'DEA-C01';
   const domainCode = new URLSearchParams(location.search).get('domain');
   const studyAll = new URLSearchParams(location.search).get('all') === 'true';
@@ -40,6 +43,26 @@ export function Study() {
     mutationFn: () => endpoints.completeStudy(id!),
     onSuccess: () => session.refetch(),
   });
+  const sessionActive = Boolean(id && session.data && !session.data.summary?.finalized);
+  const answeredCount = (session.data?.current_index ?? 0) + (currentAnswered ? 1 : 0);
+  useEffect(() => {
+    if (!sessionActive || !id) {
+      setGuard(current => current?.sessionId === id ? null : current);
+      return;
+    }
+    setGuard({
+      sessionId: id,
+      answeredCount,
+      saveAndLeave: () => endpoints.leaveStudy(id, true),
+      discardAndLeave: () => endpoints.leaveStudy(id, false),
+    });
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', warnBeforeUnload);
+      setGuard(current => current?.sessionId === id ? null : current);
+    };
+  }, [answeredCount, id, sessionActive, setGuard]);
 
   if (!id) {
     return create.isError
@@ -55,19 +78,21 @@ export function Study() {
       question={session.data!.question}
       sessionId={id}
       session={session.data!}
-      onNext={() => session.refetch()}
+      onNext={async () => { const response = await session.refetch(); setCurrentAnswered(false); return response; }}
       onComplete={() => complete.mutateAsync()}
+      onAnswered={() => setCurrentAnswered(true)}
       completeError={complete.error}
     />
   );
 }
 
-function QuestionView({ question, sessionId, session, onNext, onComplete, completeError }: {
+function QuestionView({ question, sessionId, session, onNext, onComplete, onAnswered, completeError }: {
   question?: Question;
   sessionId: string;
   session: StudySession;
   onNext: () => Promise<unknown>;
   onComplete: () => Promise<unknown>;
+  onAnswered: () => void;
   completeError: Error | null;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
@@ -76,7 +101,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, comple
   const [reportOpen, setReportOpen] = useState(false);
   const submit = useMutation({
     mutationFn: () => endpoints.submitStudy(question!.id, sessionId, { selected_answers: selected }),
-    onSuccess: setResult,
+    onSuccess: value => { setResult(value); onAnswered(); },
   });
   const explanation = useMutation({
     mutationFn: () => endpoints.generateExplanation(question!.id),

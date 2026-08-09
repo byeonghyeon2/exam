@@ -1,7 +1,18 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, utcnow
@@ -111,9 +122,21 @@ class QuestionExplanation(Base, TimestampMixin):
     token_output: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class StudySessionRecord(Base):
+    __tablename__ = "study_sessions"
+    session_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    certification_id: Mapped[int] = mapped_column(ForeignKey("certifications.id"), index=True)
+    question_ids_json: Mapped[list[int]] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(32), default="in_progress", index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class StudyAttempt(Base):
     __tablename__ = "study_attempts"
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     session_id: Mapped[str] = mapped_column(String(36), index=True)
     question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
     selected_answers_json: Mapped[list[str]] = mapped_column(JSON)
@@ -125,6 +148,7 @@ class StudyAttempt(Base):
 class MockExam(Base):
     __tablename__ = "mock_exams"
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     certification_id: Mapped[int] = mapped_column(ForeignKey("certifications.id"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="in_progress", index=True)
     question_count: Mapped[int] = mapped_column(Integer)
@@ -158,8 +182,10 @@ class MockExamQuestion(Base):
 
 class WrongNote(Base, TimestampMixin):
     __tablename__ = "wrong_notes"
+    __table_args__ = (UniqueConstraint("user_id", "question_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), unique=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
     wrong_count: Mapped[int] = mapped_column(Integer, default=0)
     correct_after_wrong_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)

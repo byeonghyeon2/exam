@@ -5,7 +5,6 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import app.api.v1.router as router_module
 from app.core.config import Settings, get_settings
 from app.db.base import Base
 from app.db.session import get_db
@@ -17,6 +16,7 @@ from app.models.entities import (
     QuestionAnswerVersion,
     QuestionChoice,
     StudyAttempt,
+    StudySessionRecord,
     WrongNote,
 )
 
@@ -78,6 +78,9 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
             questions.append(question)
         db.commit()
         question_ids = [question.id for question in questions]
+        certification_id = certification.id
+        db.add(StudySessionRecord(session_id="batch-session", user_id=0, certification_id=certification_id, question_ids_json=question_ids))
+        db.commit()
 
     def override_db() -> Iterator[Session]:
         with session_factory() as db:
@@ -93,9 +96,6 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
     )
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings
-    router_module._study_sessions["batch-session"] = question_ids
-    retry_session_id = None
-
     try:
         with TestClient(app) as client:
             wrong = client.post(
@@ -131,8 +131,6 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
             retry = client.post("/api/v1/study/history/batch-session/retry")
             assert retry.status_code == 201
             assert retry.json()["question_ids"] == [question_ids[0]]
-            retry_session_id = retry.json()["id"]
-
             repeated = client.post("/api/v1/study/sessions/batch-session/complete")
             assert repeated.status_code == 200
 
@@ -141,14 +139,33 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
             assert deleted.json() == {"deleted_count": 2}
             assert client.get("/api/v1/study/history").json() == []
             assert client.delete("/api/v1/study/history/batch-session").status_code == 404
+
+            with session_factory() as db:
+                db.add(StudySessionRecord(session_id="partial-session", user_id=0, certification_id=certification_id, question_ids_json=question_ids))
+                db.commit()
+            assert client.post(f"/api/v1/study/questions/{question_ids[0]}/submit?session_id=partial-session", json={"selected_answers": ["B"]}).status_code == 200
+            partial = client.post("/api/v1/study/sessions/partial-session/leave", json={"save_results": True})
+            assert partial.status_code == 200
+            assert partial.json()["answered_count"] == 1
+            assert partial.json()["wrong_count"] == 1
+            assert [item["session_id"] for item in client.get("/api/v1/study/history").json()] == ["partial-session"]
+            assert client.delete("/api/v1/study/history/partial-session").status_code == 200
+
+            with session_factory() as db:
+                db.add(StudySessionRecord(session_id="discarded-session", user_id=0, certification_id=certification_id, question_ids_json=question_ids))
+                db.commit()
+            assert client.post(f"/api/v1/study/questions/{question_ids[0]}/submit?session_id=discarded-session", json={"selected_answers": ["B"]}).status_code == 200
+            discarded = client.post("/api/v1/study/sessions/discarded-session/leave", json={"save_results": False})
+            assert discarded.status_code == 200
+            assert discarded.json()["finalized"] is False
+            assert client.get("/api/v1/study/history").json() == []
     finally:
-        router_module._study_sessions.pop("batch-session", None)
-        if retry_session_id:
-            router_module._study_sessions.pop(retry_session_id, None)
         app.dependency_overrides.clear()
 
     with session_factory() as db:
         note = db.scalar(select(WrongNote))
         assert note is None
         attempts = list(db.scalars(select(StudyAttempt)))
-        assert attempts == []
+        assert len(attempts) == 1
+        assert attempts[0].session_id == "discarded-session"
+        assert attempts[0].wrong_note_processed is False

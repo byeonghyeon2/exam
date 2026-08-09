@@ -109,6 +109,10 @@ class StudySessionOut(BaseModel):
     question_ids: list[int]
 
 
+class StudyLeaveRequest(BaseModel):
+    save_results: bool
+
+
 class StudyHistoryQuestion(BaseModel):
     id: int
     question_uid: str
