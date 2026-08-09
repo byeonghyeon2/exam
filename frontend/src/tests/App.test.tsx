@@ -16,6 +16,8 @@ describe('App',()=>{
     vi.stubGlobal('fetch',vi.fn((input:string|URL)=>String(input).includes('/auth/me')?Promise.resolve(response(admin)):new Promise(()=>{})));
     renderApp();
     expect(await screen.findByRole('navigation',{name:'주 메뉴'})).toBeInTheDocument();
+    expect(screen.getAllByRole('button',{name:'다크 모드'})).toHaveLength(2);
+    expect(screen.getAllByRole('button',{name:'로그아웃'})).toHaveLength(2);
     expect(screen.getByRole('heading',{name:/합격까지/})).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('불러오는 중');
   });
