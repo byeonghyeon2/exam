@@ -12,7 +12,7 @@ export function MockExamSetup() {
   const create = useMutation({ mutationFn: () => endpoints.createExam({ certification_code: code }), onSuccess: exam => navigate(`/mock-exam/${exam.id}`) });
   return <>
     <PageHeader eyebrow="실전 점검" title="모의고사" description="실제 시험 시간과 문항 수를 적용합니다. 제출 전에는 정답을 확인할 수 없습니다." />
-    <section className="panel form"><label>응시 자격증<select value={code} onChange={event => setCode(event.target.value)}><option value="">선택해 주세요</option>{certifications.data?.map(certification => <option key={certification.code} value={certification.code}>{certification.name_ko}</option>)}</select></label><div className="notice"><Clock3 /> 시험이 시작되면 타이머가 작동하며 시간이 끝나면 자동 제출됩니다.</div><button className="button" disabled={!code || create.isPending} onClick={() => create.mutate()}>{create.isPending ? '시험 생성 중…' : '모의고사 시작'}</button>{create.isError && <ErrorState error={create.error} />}</section>
+    <section className="panel form mock-exam-setup"><label>응시 자격증<select value={code} onChange={event => setCode(event.target.value)}><option value="">선택해 주세요</option>{certifications.data?.map(certification => <option key={certification.code} value={certification.code}>{certification.name_ko}</option>)}</select></label><div className="notice"><Clock3 /> 시험이 시작되면 타이머가 작동하며 시간이 끝나면 자동 제출됩니다.</div><button className="button" disabled={!code || create.isPending} onClick={() => create.mutate()}>{create.isPending ? '시험 생성 중…' : '모의고사 시작'}</button>{create.isError && <ErrorState error={create.error} />}</section>
   </>;
 }
 
