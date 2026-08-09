@@ -65,7 +65,7 @@ def test_generate_explanation_uses_verified_content_and_reuses_cache(monkeypatch
         with session_factory() as db:
             yield db
 
-    settings = Settings(database_url="sqlite://", database_host="", database_name="", database_user="", database_password="", openai_api_key="test-key", openai_explanation_model="test-model")
+    settings = Settings(database_url="sqlite://", database_host="", database_name="", database_user="", database_password="", openai_api_key="test-key", openai_explanation_model="test-model", auth_required=False)
     adapter = FakeExplanationAdapter()
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings

@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.v1.auth import admin_users, protected, public
 from app.api.v1.router import router
 from app.core.config import get_settings
 
@@ -23,5 +24,7 @@ async def request_context(request: Request, call_next):
     return response
 
 
+app.include_router(public, prefix="/api/v1")
+app.include_router(protected, prefix="/api/v1")
+app.include_router(admin_users, prefix="/api/v1")
 app.include_router(router, prefix="/api/v1")
-

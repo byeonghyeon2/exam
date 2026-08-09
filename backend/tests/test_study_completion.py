@@ -89,6 +89,7 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
         database_name="",
         database_user="",
         database_password="",
+        auth_required=False,
     )
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings

@@ -13,3 +13,4 @@ export type WrongNote={question_id:number;question_uid:string;question_ko:string
 export type StudyHistoryQuestion={id:number;question_uid:string;question_ko:string};
 export type StudyHistory={session_id:string;certification_code:string;certification_name:string;completed_at:string;total_count:number;correct_count:number;wrong_count:number;wrong_questions:StudyHistoryQuestion[]};
 export type QuestionReport={id:number;question_id:number;question_uid:string;question_ko:string;question_en:string;report_type:string;description:string;status:string;resolution_note:string|null;created_at:string;resolved_at:string|null};
+export type User={id:number;username:string;role:'user'|'admin';is_active:boolean;created_at:string;last_login_at:string|null};

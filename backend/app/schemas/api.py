@@ -8,6 +8,29 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    password: str = Field(min_length=8, max_length=128)
+
+
+class UserCreate(LoginRequest):
+    role: Literal["user", "admin"] = "user"
+
+
+class UserUpdate(BaseModel):
+    password: str | None = Field(None, min_length=8, max_length=128)
+    is_active: bool | None = None
+
+
+class UserOut(ORMModel):
+    id: int
+    username: str
+    role: Literal["user", "admin"]
+    is_active: bool
+    created_at: datetime
+    last_login_at: datetime | None
+
+
 class ChoiceOut(ORMModel):
     choice_key: str
     text_en: str

@@ -146,9 +146,29 @@ Invoke-RestMethod http://localhost:8000/api/v1/health
 
 ### 배포 서버에서 비밀정보 저장
 
-새 서버가 만들어질 때 자동으로 같은 DB에 연결하려면 `.env`를 Git에 올리는 대신 배포 플랫폼의 Environment Variables 또는 Secrets에 위 값을 한 번 등록합니다. 플랫폼은 시작할 때 값을 백엔드 프로세스에 주입하므로 재배포나 서버 재시작 때 사람이 다시 연결할 필요가 없습니다. DB 비밀번호, `OPENAI_API_KEY`, `ADMIN_ACCESS_KEY`는 프론트엔드 환경변수나 브라우저 코드에 넣지 않습니다.
+새 서버가 만들어질 때 자동으로 같은 DB에 연결하려면 `.env`를 Git에 올리는 대신 배포 플랫폼의 Environment Variables 또는 Secrets에 위 값을 한 번 등록합니다. 플랫폼은 시작할 때 값을 백엔드 프로세스에 주입하므로 재배포나 서버 재시작 때 사람이 다시 연결할 필요가 없습니다. DB 비밀번호, `OPENAI_API_KEY`, `INITIAL_ADMIN_PASSWORD`는 프론트엔드 환경변수나 브라우저 코드에 넣지 않습니다.
 
-`OPENAI_API_KEY`와 모델 이름은 선택 사항입니다. 비어 있어도 문제 조회·학습·채점·모의고사는 동작하며, 새 AI 해설 생성 요청만 설정 필요 응답을 반환합니다. 키는 브라우저, API 응답 또는 로그에 노출하지 않습니다. `ADMIN_ACCESS_KEY` 방식은 개인 로컬 사용을 위한 최소 보호이며 인터넷 공개용 완전한 인증이 아닙니다.
+`OPENAI_API_KEY`와 모델 이름은 선택 사항입니다. 비어 있어도 문제 조회·학습·채점·모의고사는 동작하며, 새 AI 해설 생성 요청만 설정 필요 응답을 반환합니다. 키는 브라우저, API 응답 또는 로그에 노출하지 않습니다.
+
+## 로그인과 관리자 계정
+
+공개 회원가입은 제공하지 않습니다. 최초 admin 계정 하나만 환경변수로 생성하고, 이후 학습자 또는 추가 관리자 계정은 로그인한 admin이 관리자 화면에서 등록합니다. 일반 계정은 관리자 메뉴가 보이지 않으며 `/admin` 화면과 `/api/v1/admin/*` API 모두 접근할 수 없습니다.
+
+`.env`에 다음 값을 설정한 뒤 마이그레이션과 서버 재시작을 수행합니다.
+
+```dotenv
+AUTH_REQUIRED=true
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=충분히-긴-초기-비밀번호
+AUTH_SESSION_DAYS=30
+AUTH_COOKIE_SECURE=false
+```
+
+`INITIAL_ADMIN_PASSWORD`가 비어 있으면 기존 `ADMIN_ACCESS_KEY` 값을 최초 admin 비밀번호로 한 번만 사용할 수 있습니다. 최초 admin은 DB에 admin 역할 계정이 하나도 없을 때 첫 로그인 요청에서 생성되며 비밀번호는 PBKDF2 해시로만 저장됩니다. 계정이 생성된 후 환경변수 값을 바꿔도 DB 비밀번호가 자동 변경되지는 않습니다.
+
+로컬 HTTP 개발에서는 `AUTH_COOKIE_SECURE=false`를 사용합니다. HTTPS로 외부에 배포할 때는 반드시 `AUTH_COOKIE_SECURE=true`로 바꾸십시오. 로그인 세션은 원문 토큰이 아니라 SHA-256 해시로 DB에 저장되고, 브라우저에는 JavaScript로 읽을 수 없는 `HttpOnly` 쿠키로 전달됩니다.
+
+로그인 후 admin 계정으로 `관리 → 계정 관리`에서 아이디, 임시 비밀번호, 권한을 지정해 계정을 생성하거나 기존 계정을 비활성화할 수 있습니다. 같은 화면의 `내 비밀번호 변경`에서 최초 비밀번호를 바꾸면 기존 로그인 세션이 모두 종료됩니다.
 
 ## 데이터 검증과 가져오기
 

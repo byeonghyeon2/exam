@@ -69,6 +69,7 @@ def test_report_is_stored_and_returned_with_question_context() -> None:
         database_user="",
         database_password="",
         admin_access_key="test-admin",
+        auth_required=False,
     )
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings

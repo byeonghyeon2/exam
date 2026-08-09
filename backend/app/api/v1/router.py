@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.v1.auth import current_user, require_admin
 from app.classifiers.domain_classifier import classify_questions
 from app.classifiers.domain_classifier import report as classification_report
 from app.core.config import Settings, get_settings
@@ -29,12 +30,12 @@ from app.models.entities import (
     WrongNote,
 )
 from app.repositories.exams import ExamRepository
-from app.schemas.api import *  # noqa: F403
+from app.schemas.api import *
 from app.services.ai import AIOutputError, AIUnavailableError, build_ai_adapter
 from app.services.allocation import allocate_by_domain
 from app.services.scoring import percentage, scaled_score, score_answer
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(current_user)])
 Db = Annotated[Session, Depends(get_db)]
 _study_sessions: dict[str, list[int]] = {}
 
@@ -51,15 +52,6 @@ def get_question(db: Session, question_id: int) -> Question:
     if not question:
         raise HTTPException(404, "Question not found")
     return question
-
-
-def require_admin(x_admin_key: Annotated[str | None, Header()] = None, settings: Settings = Depends(get_settings)) -> None:
-    if settings.admin_access_key and x_admin_key != settings.admin_access_key:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid administrator key")
-
-
-@router.get("/health")
-def health() -> dict[str, str]: return {"status": "ok"}
 
 
 @router.get("/certifications", response_model=list[CertificationOut])
@@ -402,7 +394,7 @@ def explanation(question_id: int, db: Db, language: str = "ko") -> QuestionExpla
 
 
 @router.post("/questions/{question_id}/explanation/generate", response_model=ExplanationOut)
-def generate_explanation(question_id: int, payload: ExplanationGenerate, db: Db, settings: Settings = Depends(get_settings)) -> QuestionExplanation:
+def generate_explanation(question_id: int, payload: ExplanationGenerate, db: Db, settings: Annotated[Settings, Depends(get_settings)]) -> QuestionExplanation:
     existing = db.scalar(select(QuestionExplanation).where(QuestionExplanation.question_id == question_id, QuestionExplanation.language == payload.language))
     if existing and existing.generation_status == "complete": return existing
     question = get_question(db, question_id); answers = current_answers(question)

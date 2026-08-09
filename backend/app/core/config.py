@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     database_password: str = ""
     frontend_origin: str = "http://localhost:5173"
     admin_access_key: str = ""
+    auth_required: bool = True
+    initial_admin_username: str = "admin"
+    initial_admin_password: str = ""
+    auth_session_days: int = Field(30, ge=1, le=365)
+    auth_cookie_secure: bool = False
     openai_api_key: str = ""
     openai_model: str = ""
     openai_verification_model: str = ""

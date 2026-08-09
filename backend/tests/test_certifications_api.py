@@ -46,6 +46,7 @@ def test_certification_list_returns_every_active_certification() -> None:
         database_name="",
         database_user="",
         database_password="",
+        auth_required=False,
     )
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings
