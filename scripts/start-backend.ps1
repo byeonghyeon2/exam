@@ -7,6 +7,6 @@ if (-not (Test-Path $Python)) { throw 'Backend environment is missing. Run .\scr
 Push-Location (Join-Path $Root 'backend')
 try {
     & $Python -m alembic upgrade head
-    & $Python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    & $Python -m app.run
 } finally { Pop-Location }
 

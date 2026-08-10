@@ -8,22 +8,12 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.auth import admin_users, protected, public
 from app.api.v1.router import router
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 
-settings = get_settings()
 logger = logging.getLogger(__name__)
-app = FastAPI(title=settings.app_name, debug=settings.app_debug)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[settings.frontend_origin],
-    allow_origin_regex=r"https?://(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+LOCAL_ORIGIN_REGEX = r"https?://(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?"
 
 
-@app.middleware("http")
 async def request_context(request: Request, call_next):
     request_id = request.headers.get("x-request-id", str(uuid4())); started = time.perf_counter()
     try: response = await call_next(request)
@@ -34,7 +24,23 @@ async def request_context(request: Request, call_next):
     return response
 
 
-app.include_router(public, prefix="/api/v1")
-app.include_router(protected, prefix="/api/v1")
-app.include_router(admin_users, prefix="/api/v1")
-app.include_router(router, prefix="/api/v1")
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
+    application = FastAPI(title=settings.app_name, debug=settings.app_debug)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=[settings.frontend_origin],
+        allow_origin_regex=LOCAL_ORIGIN_REGEX if settings.cors_allow_local_network else None,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    application.middleware("http")(request_context)
+    application.include_router(public, prefix="/api/v1")
+    application.include_router(protected, prefix="/api/v1")
+    application.include_router(admin_users, prefix="/api/v1")
+    application.include_router(router, prefix="/api/v1")
+    return application
+
+
+app = create_app()

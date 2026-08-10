@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -13,6 +14,7 @@ node_modules/
 dist/
 frontend/preview/
 coverage/
+.coverage
 .vite/
 .idea/
 .vscode/

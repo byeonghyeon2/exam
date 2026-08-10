@@ -223,3 +223,7 @@ git push -u origin main
 - AI 해설 실패: 키와 모델 환경 변수를 설정하고 서버를 재시작합니다. 학습·채점은 계속 사용할 수 있습니다.
 
 PDF 레이아웃 파싱은 이 프로젝트 범위가 아닙니다. 향후 PDF 파이프라인은 지정된 dataset 패키지를 생성해 `data/processed/dataset/`에 놓으면 현재 검증·가져오기 경계에 연결됩니다.
+
+## CentOS 7 · Nginx 운영 배포
+
+운영 환경에서는 Nginx가 React 정적 파일을 제공하고 `/api/v1/*` 요청을 `127.0.0.1:8000`의 FastAPI로 전달합니다. 프론트엔드는 `VITE_API_BASE_URL=/api/v1`로 빌드하며, 로컬 개발에서는 `http://localhost:8000/api/v1`을 계속 사용할 수 있습니다. 환경파일, Nginx, systemd 설정과 HTTP에서 HTTPS로 전환할 때의 쿠키 설정은 [CentOS 7 + Nginx 배포 안내](docs/centos7-nginx-deployment.md)를 참고하십시오.

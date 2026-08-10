@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     database_user: str = ""
     database_password: str = ""
     frontend_origin: str = "http://localhost:5173"
+    cors_allow_local_network: bool = True
+    proxy_trusted_ips: str = "127.0.0.1"
     admin_access_key: str = ""
     auth_required: bool = True
     initial_admin_username: str = "admin"

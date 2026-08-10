@@ -88,13 +88,24 @@ def login(payload: LoginRequest, response: Response, db: Db, settings: Annotated
 
 
 @public.post("/auth/logout", status_code=204)
-def logout(response: Response, db: Db, certflow_session: Annotated[str | None, Cookie()] = None) -> Response:
+def logout(
+    response: Response,
+    db: Db,
+    settings: Annotated[Settings, Depends(get_settings)],
+    certflow_session: Annotated[str | None, Cookie()] = None,
+) -> Response:
     if certflow_session:
         found = find_session(db, certflow_session)
         if found:
             found[0].revoked_at = utcnow()
             db.commit()
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(
+        SESSION_COOKIE,
+        path="/",
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 

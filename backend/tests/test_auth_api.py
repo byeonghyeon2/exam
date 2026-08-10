@@ -56,11 +56,15 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             assert logged_in.json()["role"] == "admin"
             assert logged_in.json()["password_managed_by_environment"] is True
             assert logged_in.cookies.get("certflow_session")
+            assert "HttpOnly" in logged_in.headers["set-cookie"]
+            assert "SameSite=lax" in logged_in.headers["set-cookie"]
+            assert "Secure" not in logged_in.headers["set-cookie"]
 
             created = client.post("/api/v1/admin/users", json={"username": "learner", "password": "learner-password", "role": "user"})
             assert created.status_code == 201
             assert created.json()["username"] == "learner"
             assert [user["username"] for user in client.get("/api/v1/admin/users").json()] == ["learner"]
+            assert client.post("/api/v1/admin/users", json={"username": "learner", "password": "other-password", "role": "user"}).status_code == 409
             assert client.post("/api/v1/admin/users", json={"username": "second-admin", "password": "another-password", "role": "admin"}).status_code == 409
 
             with session_factory() as db:
@@ -94,6 +98,18 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             assert client.post("/api/v1/auth/logout").status_code == 204
             assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "strong-admin-password"}).status_code == 200
             assert [note["question_uid"] for note in client.get("/api/v1/wrong-notes").json()] == ["ADMIN-WRONG"]
+            assert client.patch("/api/v1/admin/users/999999", json={"is_active": False}).status_code == 404
+            updated = client.patch(
+                f"/api/v1/admin/users/{learner_login.json()['id']}",
+                json={"password": "updated-password", "is_active": False},
+            )
+            assert updated.status_code == 200
+            assert updated.json()["is_active"] is False
+            settings.auth_cookie_secure = True
+            secure_login = client.post("/api/v1/auth/login", json={"username": "admin", "password": "strong-admin-password"})
+            assert "Secure" in secure_login.headers["set-cookie"]
+            secure_logout = client.post("/api/v1/auth/logout")
+            assert "Secure" in secure_logout.headers["set-cookie"]
     finally:
         app.dependency_overrides.clear()
 

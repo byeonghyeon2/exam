@@ -1,0 +1,19 @@
+[Unit]
+Description=Certification Exam FastAPI backend
+After=network.target
+
+[Service]
+Type=simple
+User=exam
+Group=exam
+WorkingDirectory=/opt/exam/backend
+EnvironmentFile=/opt/exam/backend/.env
+ExecStartPre=/opt/exam/backend/.venv/bin/python -m alembic upgrade head
+ExecStart=/opt/exam/backend/.venv/bin/python -m app.run
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
