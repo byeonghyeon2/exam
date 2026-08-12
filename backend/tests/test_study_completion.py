@@ -131,6 +131,40 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
             retry = client.post("/api/v1/study/history/batch-session/retry")
             assert retry.status_code == 201
             assert retry.json()["question_ids"] == [question_ids[0]]
+            retry_session_id = retry.json()["id"]
+            assert client.post(
+                f"/api/v1/study/questions/{question_ids[0]}/submit?session_id={retry_session_id}",
+                json={"selected_answers": ["B"]},
+            ).status_code == 200
+            assert client.post(f"/api/v1/study/sessions/{retry_session_id}/complete").status_code == 200
+
+            history_after_wrong_retry = client.get("/api/v1/study/history").json()
+            assert len(history_after_wrong_retry) == 1
+            assert history_after_wrong_retry[0]["session_id"] == "batch-session"
+            assert (history_after_wrong_retry[0]["correct_count"], history_after_wrong_retry[0]["wrong_count"]) == (1, 1)
+
+            retry_again = client.post("/api/v1/study/history/batch-session/retry")
+            assert retry_again.status_code == 201
+            retry_again_session_id = retry_again.json()["id"]
+            assert client.post(
+                f"/api/v1/study/questions/{question_ids[0]}/submit?session_id={retry_again_session_id}",
+                json={"selected_answers": ["A"]},
+            ).status_code == 200
+            assert client.post(f"/api/v1/study/sessions/{retry_again_session_id}/complete").status_code == 200
+
+            completed_history = client.get("/api/v1/study/history").json()
+            assert len(completed_history) == 1
+            assert completed_history[0]["session_id"] == "batch-session"
+            assert (completed_history[0]["total_count"], completed_history[0]["correct_count"], completed_history[0]["wrong_count"]) == (2, 2, 0)
+            assert completed_history[0]["wrong_questions"] == []
+            assert client.post("/api/v1/study/history/batch-session/retry").status_code == 409
+
+            with session_factory() as db:
+                note = db.scalar(select(WrongNote).where(WrongNote.question_id == question_ids[0]))
+                assert note is not None
+                assert note.wrong_count == 2
+                assert note.correct_after_wrong_count == 1
+                assert note.status == "mastered"
             repeated = client.post("/api/v1/study/sessions/batch-session/complete")
             assert repeated.status_code == 200
 

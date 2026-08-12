@@ -67,6 +67,44 @@ def get_question(db: Session, question_id: int) -> Question:
     return question
 
 
+def may_access_explanation(db: Session, user: User | None, question_id: int) -> bool:
+    """Allow explanations only after this learner submitted an answer."""
+    if user is None:
+        return False
+    if user.role == "admin":
+        return True
+    study_attempt = db.scalar(
+        select(StudyAttempt.id).where(
+            StudyAttempt.user_id == user.id,
+            StudyAttempt.question_id == question_id,
+        ).limit(1)
+    )
+    if study_attempt is not None:
+        return True
+    submitted_exam_question = db.scalar(
+        select(MockExamQuestion.id)
+        .join(MockExam, MockExam.id == MockExamQuestion.mock_exam_id)
+        .where(
+            MockExam.user_id == user.id,
+            MockExam.status == "submitted",
+            MockExamQuestion.question_id == question_id,
+        )
+        .limit(1)
+    )
+    return submitted_exam_question is not None
+
+
+def require_answer_before_explanation(
+    db: Session,
+    user: User | None,
+    question_id: int,
+    settings: Settings,
+) -> None:
+    # Authentication can be disabled for isolated local development and existing test fixtures.
+    if settings.auth_required and not may_access_explanation(db, user, question_id):
+        raise HTTPException(404, "Explanation is not available for this user")
+
+
 @router.get("/certifications", response_model=list[CertificationOut])
 def certifications(db: Db) -> list[Certification]:
     return list(db.scalars(select(Certification).where(Certification.is_active.is_(True)).order_by(Certification.certification_code)))
@@ -147,6 +185,24 @@ def update_wrong_note(db: Session, user_id: int, question_id: int, correct: bool
 
 def finalize_study(db: Session, record: StudySessionRecord, attempts: list[StudyAttempt], status: str) -> dict[str, int | bool]:
     user_id = record.user_id
+    if record.retry_of_session_id:
+        for attempt in attempts:
+            update_wrong_note(db, user_id, attempt.question_id, attempt.is_correct)
+            if attempt.is_correct:
+                original = db.scalar(select(StudyAttempt).where(
+                    StudyAttempt.session_id == record.retry_of_session_id,
+                    StudyAttempt.user_id == user_id,
+                    StudyAttempt.question_id == attempt.question_id,
+                    StudyAttempt.wrong_note_processed.is_(True),
+                ))
+                if original:
+                    original.is_correct = True
+                    original.selected_answers_json = attempt.selected_answers_json
+                note = db.scalar(select(WrongNote).where(WrongNote.user_id == user_id, WrongNote.question_id == attempt.question_id))
+                if note: note.status = "mastered"
+        record.status = status; record.completed_at = utcnow(); db.commit()
+        correct_count = sum(attempt.is_correct for attempt in attempts)
+        return {"total_questions": len(record.question_ids_json), "answered_count": len(attempts), "correct_count": correct_count, "wrong_count": len(attempts) - correct_count, "finalized": True}
     for attempt in attempts:
         if not attempt.wrong_note_processed:
             update_wrong_note(db, user_id, attempt.question_id, attempt.is_correct)
@@ -210,7 +266,7 @@ def study_history(db: Db, user: CurrentUser) -> list[StudyHistoryOut]:
                 "question_uid": question.question_uid,
                 "question_ko": question.question_ko,
             })
-    return [StudyHistoryOut(**group) for group in grouped.values() if group["wrong_count"]]
+    return [StudyHistoryOut(**group) for group in grouped.values()]
 
 
 @router.post("/study/history/{session_id}/retry", response_model=StudySessionOut, status_code=201)
@@ -226,9 +282,10 @@ def retry_study_history(session_id: str, db: Db, user: CurrentUser) -> StudySess
         .order_by(StudyAttempt.id)
     ))
     if not question_ids:
-        raise HTTPException(404, "Completed study session with wrong answers not found")
+        completed = db.scalar(select(StudyAttempt.id).where(StudyAttempt.session_id == session_id, StudyAttempt.user_id == owner_id(user), StudyAttempt.wrong_note_processed.is_(True)))
+        raise HTTPException(409 if completed else 404, "There are no remaining wrong answers to retry")
     first_question = db.get(Question, question_ids[0]); retry_session_id = str(uuid4())
-    db.add(StudySessionRecord(session_id=retry_session_id, user_id=owner_id(user), certification_id=first_question.certification_id, question_ids_json=question_ids)); db.commit()
+    db.add(StudySessionRecord(session_id=retry_session_id, user_id=owner_id(user), certification_id=first_question.certification_id, question_ids_json=question_ids, retry_of_session_id=session_id)); db.commit()
     return StudySessionOut(id=retry_session_id, question_ids=question_ids)
 
 
@@ -270,6 +327,15 @@ def delete_study_history(session_id: str, db: Db, user: CurrentUser) -> dict[str
     ))
     if not attempts:
         raise HTTPException(404, "Completed study session not found")
+    retry_ids = list(db.scalars(select(StudySessionRecord.session_id).where(
+        StudySessionRecord.retry_of_session_id == session_id,
+        StudySessionRecord.user_id == owner_id(user),
+    )))
+    for retry_attempt in db.scalars(select(StudyAttempt).where(StudyAttempt.session_id.in_(retry_ids)) if retry_ids else select(StudyAttempt).where(False)):
+        db.delete(retry_attempt)
+    for retry_id in retry_ids:
+        retry_record = db.get(StudySessionRecord, retry_id)
+        if retry_record: db.delete(retry_record)
     question_ids = {attempt.question_id for attempt in attempts}
     for attempt in attempts:
         db.delete(attempt)
@@ -321,10 +387,27 @@ def get_exam(db: Session, exam_id: int, user: User | None) -> MockExam:
 def mock_exam(exam_id: int, db: Db, user: CurrentUser) -> MockExam: return get_exam(db, exam_id, user)
 
 
-@router.get("/mock-exams/{exam_id}/questions", response_model=list[QuestionOut])
-def mock_questions(exam_id: int, db: Db, user: CurrentUser) -> list[Question]:
-    exam = get_exam(db, exam_id, user); by_id = {q.id: q for q in db.scalars(select(Question).where(Question.id.in_([x.question_id for x in exam.questions])).options(selectinload(Question.choices)))}
-    return [by_id[x.question_id] for x in exam.questions]
+@router.get("/mock-exams/{exam_id}/questions")
+def mock_questions(exam_id: int, db: Db, user: CurrentUser) -> dict[str, Any]:
+    """Return navigation metadata without exposing every assigned question body."""
+    exam = get_exam(db, exam_id, user)
+    question_ids = [item.question_id for item in exam.questions]
+    return {"total": len(question_ids), "question_ids": question_ids}
+
+
+@router.get("/mock-exams/{exam_id}/questions/{question_id}", response_model=QuestionOut)
+def mock_question(exam_id: int, question_id: int, db: Db, user: CurrentUser) -> Question:
+    exam = get_exam(db, exam_id, user)
+    if not any(item.question_id == question_id for item in exam.questions):
+        raise HTTPException(404, "Question not assigned to exam")
+    question = db.scalar(
+        select(Question)
+        .where(Question.id == question_id)
+        .options(selectinload(Question.choices))
+    )
+    if question is None:
+        raise HTTPException(404, "Question not found")
+    return question
 
 
 def ensure_open(exam: MockExam) -> None:
@@ -415,14 +498,22 @@ def report(question_id: int, payload: ReportCreate, db: Db) -> dict[str, int]:
 
 
 @router.get("/questions/{question_id}/explanation", response_model=ExplanationOut)
-def explanation(question_id: int, db: Db, language: str = "ko") -> QuestionExplanation:
+def explanation(
+    question_id: int,
+    db: Db,
+    user: CurrentUser,
+    settings: Annotated[Settings, Depends(get_settings)],
+    language: str = "ko",
+) -> QuestionExplanation:
+    require_answer_before_explanation(db, user, question_id, settings)
     item = db.scalar(select(QuestionExplanation).where(QuestionExplanation.question_id == question_id, QuestionExplanation.language == language, QuestionExplanation.generation_status == "complete"))
     if not item: raise HTTPException(404, "Explanation not generated")
     return item
 
 
 @router.post("/questions/{question_id}/explanation/generate", response_model=ExplanationOut)
-def generate_explanation(question_id: int, payload: ExplanationGenerate, db: Db, settings: Annotated[Settings, Depends(get_settings)]) -> QuestionExplanation:
+def generate_explanation(question_id: int, payload: ExplanationGenerate, db: Db, user: CurrentUser, settings: Annotated[Settings, Depends(get_settings)]) -> QuestionExplanation:
+    require_answer_before_explanation(db, user, question_id, settings)
     existing = db.scalar(select(QuestionExplanation).where(QuestionExplanation.question_id == question_id, QuestionExplanation.language == payload.language))
     if existing and existing.generation_status == "complete": return existing
     question = get_question(db, question_id); answers = current_answers(question)

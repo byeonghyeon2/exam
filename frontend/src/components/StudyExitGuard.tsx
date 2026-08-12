@@ -1,7 +1,7 @@
 import {createContext,useContext,type Dispatch,type SetStateAction} from 'react';
 
 export type StudyExitGuard={sessionId:string;answeredCount:number;saveAndLeave:()=>Promise<unknown>;discardAndLeave:()=>Promise<unknown>};
-export type StudyExitGuardContextValue={setGuard:Dispatch<SetStateAction<StudyExitGuard|null>>};
+export type StudyExitGuardContextValue={setGuard:Dispatch<SetStateAction<StudyExitGuard|null>>;requestExit:(to:string)=>void};
 
 export const StudyExitGuardContext=createContext<StudyExitGuardContextValue|null>(null);
 

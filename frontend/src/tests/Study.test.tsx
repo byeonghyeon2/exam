@@ -29,11 +29,11 @@ const session = {
   },
 };
 
-function renderStudy() {
+function renderStudy(requestExit = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <StudyExitGuardContext.Provider value={{setGuard:vi.fn()}}><MemoryRouter initialEntries={['/study/session-1']}>
+      <StudyExitGuardContext.Provider value={{setGuard:vi.fn(),requestExit}}><MemoryRouter initialEntries={['/study/session-1']}>
         <Routes><Route path="/study/:id" element={<Study />} /></Routes>
       </MemoryRouter></StudyExitGuardContext.Provider>
     </QueryClientProvider>,
@@ -46,6 +46,45 @@ afterEach(() => {
 });
 
 describe('Study', () => {
+  it('allows a single answer to be deselected before grading', async () => {
+    vi.spyOn(endpoints, 'study').mockResolvedValue(session);
+    const user = userEvent.setup();
+    renderStudy();
+
+    const answer = await screen.findByRole('radio', { name: /사용자 선택/ });
+    await user.click(answer);
+    expect(answer).toBeChecked();
+    await user.click(answer);
+    expect(answer).not.toBeChecked();
+    expect(screen.getByRole('button', { name: '정답 확인' })).toBeDisabled();
+  });
+
+  it('opens the shared three-choice exit flow from the study exit button', async () => {
+    vi.spyOn(endpoints, 'study').mockResolvedValue(session);
+    const requestExit = vi.fn();
+    const user = userEvent.setup();
+    renderStudy(requestExit);
+
+    await user.click(await screen.findByRole('button', { name: '학습 나가기' }));
+    expect(requestExit).toHaveBeenCalledWith('/');
+  });
+
+  it('scrolls the next study and retry question to the top', async () => {
+    const nextSession = { ...session, total_questions: 2, current_index: 1, question: { ...session.question, id: 11, question_uid: 'DEA-11' } };
+    vi.spyOn(endpoints, 'study').mockResolvedValueOnce({ ...session, total_questions: 2 }).mockResolvedValueOnce(nextSession);
+    vi.spyOn(endpoints, 'submitStudy').mockResolvedValue({ is_correct: true, correct_answers: ['A'] });
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const user = userEvent.setup();
+    renderStudy();
+
+    await screen.findByText('문제입니다');
+    scrollIntoView.mockClear();
+    await user.click(screen.getByRole('radio', { name: /사용자 선택/ }));
+    await user.click(screen.getByRole('button', { name: '정답 확인' }));
+    await user.click(await screen.findByRole('button', { name: '다음 문제' }));
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+  });
   it('keeps the wrong selection and visually reveals the correct answer', async () => {
     vi.spyOn(endpoints, 'study').mockResolvedValue(session);
     vi.spyOn(endpoints, 'submitStudy').mockResolvedValue({

@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
 import type { Explanation, Question, StudySession, Submission } from '../types';
@@ -14,7 +14,7 @@ export function Study() {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const { setGuard } = useStudyExitGuard();
+  const { setGuard, requestExit } = useStudyExitGuard();
   const [currentAnswered, setCurrentAnswered] = useState(false);
   const certificationCode = new URLSearchParams(location.search).get('cert') ?? 'DEA-C01';
   const domainCode = new URLSearchParams(location.search).get('domain');
@@ -82,23 +82,26 @@ export function Study() {
       onComplete={() => complete.mutateAsync()}
       onAnswered={() => setCurrentAnswered(true)}
       completeError={complete.error}
+      onExit={() => requestExit('/')}
     />
   );
 }
 
-function QuestionView({ question, sessionId, session, onNext, onComplete, onAnswered, completeError }: {
+function QuestionView({ question, sessionId, session, onNext, onComplete, onAnswered, onExit, completeError }: {
   question?: Question;
   sessionId: string;
   session: StudySession;
   onNext: () => Promise<unknown>;
   onComplete: () => Promise<unknown>;
   onAnswered: () => void;
+  onExit: () => void;
   completeError: Error | null;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [result, setResult] = useState<Submission>();
   const [movingNext, setMovingNext] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const questionRef = useRef<HTMLElement>(null);
   const submit = useMutation({
     mutationFn: () => endpoints.submitStudy(question!.id, sessionId, { selected_answers: selected }),
     onSuccess: value => { setResult(value); onAnswered(); },
@@ -119,7 +122,10 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
   }, [explanation.isPending]);
   const moveNext = async (finish = false) => {
     setMovingNext(true);
-    try { await (finish ? onComplete() : onNext()); } finally { setMovingNext(false); }
+    try {
+      await (finish ? onComplete() : onNext());
+      if (!finish) document.querySelector('.question')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    } finally { setMovingNext(false); }
   };
 
   if (!question) {
@@ -135,7 +141,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
     ? (current.includes(choiceId)
       ? current.filter(item => item !== choiceId)
       : current.length < question.required_answer_count ? [...current, choiceId] : current)
-    : [choiceId]);
+    : (current.includes(choiceId) ? [] : [choiceId]));
   return <>
     <PageHeader
       eyebrow="집중 학습"
@@ -143,7 +149,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
       action={<span className="badge">{multiple ? `${question.required_answer_count}개 선택` : '1개 선택'}</span>}
     />
     <Progress label="학습 진도" value={(session.current_index / session.total_questions) * 100} />
-    <section className="question">
+    <section className="question" ref={questionRef}>
       <p className="question-en">{question.question_en}</p>
       <h2>{question.question_ko}</h2>
       <fieldset disabled={Boolean(result)}>
@@ -152,7 +158,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
           const checked = selected.includes(choice.id);
           const correct = result?.correct_answers.includes(choice.id);
           return <label key={choice.id} className={`choice ${checked ? 'selected' : ''} ${correct ? 'correct' : ''} ${result && checked && !correct ? 'incorrect' : ''}`}>
-            <input type={multiple ? 'checkbox' : 'radio'} name="answer" checked={checked} onChange={() => choose(choice.id)} />
+            <input type="checkbox" role={multiple ? undefined : 'radio'} name="answer" checked={checked} onChange={() => choose(choice.id)} />
             <b>{choice.id}</b>
             <span>{choice.text_ko}<small>{choice.text_en}</small></span>
             {result && correct && <em className="choice-status correct-status">정답</em>}
@@ -167,6 +173,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
       {explanation.data && <ExplanationCard explanation={explanation.data} question={question} selected={selected} correctAnswers={result?.correct_answers ?? []} />}
       {explanation.isError && <div className="ai-explanation-error" role="alert"><b>AI 해설을 생성하지 못했습니다.</b><span>{explanation.error.message}</span><button type="button" onClick={() => explanation.mutate()}>다시 시도</button></div>}
       <div className="actions">
+        <button type="button" onClick={onExit}>학습 나가기</button>
         <button className="button secondary" type="button" onClick={() => setReportOpen(true)}>문제 신고</button>
         {!result
           ? <button className="button" disabled={!selected.length || submit.isPending} onClick={() => submit.mutate()}>{submit.isPending ? '채점 중…' : '정답 확인'}</button>

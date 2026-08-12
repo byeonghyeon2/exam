@@ -131,6 +131,7 @@ class StudySessionRecord(Base):
     status: Mapped[str] = mapped_column(String(32), default="in_progress", index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    retry_of_session_id: Mapped[str | None] = mapped_column(String(36), index=True)
 
 
 class StudyAttempt(Base):

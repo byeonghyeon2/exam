@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     initial_admin_password: str = ""
     auth_session_days: int = Field(30, ge=1, le=365)
     auth_cookie_secure: bool = False
+    question_rate_limit_requests: int = Field(60, ge=1, le=10000)
+    question_rate_limit_window_seconds: int = Field(60, ge=1, le=3600)
     openai_api_key: str = ""
     openai_model: str = ""
     openai_verification_model: str = ""

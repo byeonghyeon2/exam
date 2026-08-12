@@ -1,6 +1,6 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Clock3, LoaderCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
 import { ErrorState, Loading, PageHeader, Progress } from '../components/common';
@@ -19,10 +19,18 @@ export function MockExamSetup() {
 export function MockExamSession() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const questions = useQuery({ queryKey: ['exam-questions', id], queryFn: () => endpoints.examQuestions(id) });
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string[]>>({});
   const [seconds, setSeconds] = useState(7800);
+  const questionRef = useRef<HTMLElement>(null);
+  const currentQuestionId = questions.data?.question_ids[index];
+  const currentQuestion = useQuery({
+    queryKey: ['exam-question', id, currentQuestionId],
+    queryFn: () => endpoints.examQuestion(id, currentQuestionId!),
+    enabled: currentQuestionId !== undefined,
+  });
   const submit = useMutation({
     mutationFn: async () => {
       await Promise.all(Object.entries(answers).map(([questionId, selected]) => endpoints.saveAnswer(id, Number(questionId), selected)));
@@ -43,23 +51,35 @@ export function MockExamSession() {
 
   if (questions.isLoading) return <Loading label="시험 문제를 배정하는 중" />;
   if (questions.isError) return <ErrorState error={questions.error} />;
-  const question = questions.data![index];
+  if (currentQuestion.isLoading) return <Loading label="시험 문제를 불러오는 중" />;
+  if (currentQuestion.isError) return <ErrorState error={currentQuestion.error} />;
+  const question = currentQuestion.data;
   if (!question) return <ErrorState error={new Error('시험 문제가 없습니다.')} />;
   const selected = answers[question.id] ?? [];
   const choose = (choiceId: string) => {
     if (submit.isPending) return;
     const multiple = question.question_type === 'multiple_response';
-    const next = multiple ? (selected.includes(choiceId) ? selected.filter(item => item !== choiceId) : [...selected, choiceId]) : [choiceId];
+    const next = multiple ? (selected.includes(choiceId) ? selected.filter(item => item !== choiceId) : [...selected, choiceId]) : (selected.includes(choiceId) ? [] : [choiceId]);
     setAnswers(current => ({ ...current, [question.id]: next }));
     void endpoints.saveAnswer(id, question.id, next);
+  };
+  const moveTo = async (nextIndex: number) => {
+    const nextQuestionId = questions.data!.question_ids[nextIndex];
+    if (nextQuestionId === undefined) return;
+    await queryClient.fetchQuery({
+      queryKey: ['exam-question', id, nextQuestionId],
+      queryFn: () => endpoints.examQuestion(id, nextQuestionId),
+    });
+    setIndex(nextIndex);
+    questionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   };
 
   return <>
     <div className="exam-content" aria-busy={submit.isPending}>
       <div className="exam-bar"><b>모의고사</b><span className="timer"><Clock3 /> {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</span><button disabled={submit.isPending} onClick={() => submitExam()}>시험 제출</button></div>
-      <Progress label="시험 진행" value={((index + 1) / questions.data!.length) * 100} />
-      <section className="question"><span className="badge">문제 {index + 1} · {question.question_type === 'multiple_response' ? '복수 선택' : '단일 선택'}</span><p className="question-en">{question.question_en}</p><h2>{question.question_ko}</h2><fieldset disabled={submit.isPending}><legend className="sr-only">답안</legend>{question.choices.map(choice => <label key={choice.id} className={`choice ${selected.includes(choice.id) ? 'selected' : ''}`}><input type={question.question_type === 'multiple_response' ? 'checkbox' : 'radio'} checked={selected.includes(choice.id)} onChange={() => choose(choice.id)} /><b>{choice.id}</b><span>{choice.text_ko}<small>{choice.text_en}</small></span></label>)}</fieldset><div className="actions"><button disabled={submit.isPending || index === 0} onClick={() => setIndex(current => current - 1)}>이전</button><button className="button" disabled={submit.isPending || index === questions.data!.length - 1} onClick={() => setIndex(current => current + 1)}>다음 문제</button></div></section>
-      <div className="palette" aria-label="문제 이동">{questions.data!.map((item, itemIndex) => <button disabled={submit.isPending} aria-label={`${itemIndex + 1}번 문제`} className={`${itemIndex === index ? 'current' : ''} ${answers[item.id]?.length ? 'answered' : ''}`} key={item.id} onClick={() => setIndex(itemIndex)}>{itemIndex + 1}</button>)}</div>
+      <Progress label="시험 진행" value={((index + 1) / questions.data!.total) * 100} />
+      <section className="question" ref={questionRef}><span className="badge">문제 {index + 1} · {question.question_type === 'multiple_response' ? '복수 선택' : '단일 선택'}</span><p className="question-en">{question.question_en}</p><h2>{question.question_ko}</h2><fieldset disabled={submit.isPending}><legend className="sr-only">답안</legend>{question.choices.map(choice => {const multiple=question.question_type==='multiple_response';return <label key={choice.id} className={`choice ${selected.includes(choice.id) ? 'selected' : ''}`}><input type="checkbox" role={multiple?undefined:'radio'} checked={selected.includes(choice.id)} onChange={() => choose(choice.id)} /><b>{choice.id}</b><span>{choice.text_ko}<small>{choice.text_en}</small></span></label>})}</fieldset><div className="actions"><button disabled={submit.isPending || index === 0} onClick={() => moveTo(index - 1)}>이전</button><button className="button" disabled={submit.isPending || index === questions.data!.total - 1} onClick={() => moveTo(index + 1)}>다음 문제</button></div></section>
+      <div className="palette" aria-label="문제 이동">{questions.data!.question_ids.map((questionId, itemIndex) => <button disabled={submit.isPending} aria-label={`${itemIndex + 1}번 문제`} className={`${itemIndex === index ? 'current' : ''} ${answers[questionId]?.length ? 'answered' : ''}`} key={questionId} onClick={() => moveTo(itemIndex)}>{itemIndex + 1}</button>)}</div>
       {submit.isError && <ErrorState error={submit.error} />}
     </div>
     {submit.isPending && <div className="grading-overlay" role="alert" aria-live="assertive"><LoaderCircle className="spin" /><strong>채점중입니다.</strong><span>답안을 확인하고 결과를 계산하고 있습니다.</span></div>}

@@ -2,6 +2,7 @@ export type Certification={code:string;name_ko:string;name_en:string;exam_versio
 export type Domain={id:number;domain_code:string;name_ko:string;name_en:string;exam_weight:number};
 export type Choice={id:string;text_en:string;text_ko:string};
 export type Question={id:number;question_uid:string;question_type:'multiple_choice'|'multiple_response';question_en:string;question_ko:string;required_answer_count:number;choices:Choice[];domain_name?:string;difficulty?:string;classification_status?:string;classification_confidence?:number;classification_reason?:string};
+export type ExamQuestionIndex={total:number;question_ids:number[]};
 export type ClassificationReport={certification:string;domain_counts:Record<string,number>;status_counts:Record<string,number>};
 export type MockReadiness={ready:boolean;question_count:number;unclassified:number;domains:{domain_code:string;required:number;available:number;shortage:number}[]};
 export type StudySummary={total_questions:number;answered_count:number;correct_count:number;wrong_count:number;finalized:boolean};

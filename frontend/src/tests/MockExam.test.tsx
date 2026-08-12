@@ -41,6 +41,18 @@ function renderSession() {
   );
 }
 
+function mockExamQuestions(items: Question[] = questions) {
+  vi.spyOn(endpoints, 'examQuestions').mockResolvedValue({
+    total: items.length,
+    question_ids: items.map(question => question.id),
+  });
+  return vi.spyOn(endpoints, 'examQuestion').mockImplementation(async (_examId, questionId) => {
+    const question = items.find(item => item.id === questionId);
+    if (!question) throw new Error('Question not found');
+    return question;
+  });
+}
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('MockExamSetup', () => {
@@ -100,11 +112,11 @@ describe('mobile exam regression styles', () => {
 
 describe('MockExamSession', () => {
   it('shows loading, request errors, and an empty-exam error explicitly', async () => {
-    let resolveQuestions!: (value: Question[]) => void;
+    let resolveQuestions!: (value: {total:number;question_ids:number[]}) => void;
     vi.spyOn(endpoints, 'examQuestions').mockReturnValue(new Promise(resolve => { resolveQuestions = resolve; }));
     const view = renderSession();
     expect(screen.getByRole('status')).toBeInTheDocument();
-    resolveQuestions([]);
+    resolveQuestions({ total: 0, question_ids: [] });
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     view.unmount();
 
@@ -115,18 +127,20 @@ describe('MockExamSession', () => {
 
   it('supports single and multiple answers, paging, and direct palette navigation', async () => {
     const save = vi.spyOn(endpoints, 'saveAnswer').mockResolvedValue(undefined);
-    vi.spyOn(endpoints, 'examQuestions').mockResolvedValue(questions);
+    const fetchQuestion = mockExamQuestions();
     const user = userEvent.setup();
     renderSession();
 
     const first = await screen.findByRole('radio', { name: /첫 답안/ });
     const second = screen.getByRole('radio', { name: /둘째 답안/ });
     await user.click(first);
+    await user.click(first);
+    expect(first).not.toBeChecked();
+    await user.click(first);
     await user.click(second);
     expect(first).not.toBeChecked();
     expect(second).toBeChecked();
 
-    const palette = document.querySelector('.palette')!;
     await user.click(screen.getByRole('button', { name: '다음 문제' }));
     await user.click(screen.getByRole('button', { name: '이전' }));
     await user.click(screen.getByRole('button', { name: /2번 문제/ }));
@@ -137,12 +151,31 @@ describe('MockExamSession', () => {
     await user.click(answerA);
     expect(answerA).not.toBeChecked();
     expect(answerB).toBeChecked();
-    expect(palette.querySelectorAll('.answered')).toHaveLength(2);
+    expect(document.querySelector('.palette')!.querySelectorAll('.answered')).toHaveLength(2);
     expect(save).toHaveBeenLastCalledWith('exam-1', 2, ['B']);
+    expect(fetchQuestion).toHaveBeenCalledWith('exam-1', 1);
+    expect(fetchQuestion).toHaveBeenCalledWith('exam-1', 2);
+  });
+
+  it('scrolls previous, next, and palette navigation to the question top', async () => {
+    mockExamQuestions();
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const user = userEvent.setup();
+    renderSession();
+
+    await screen.findByText('긴 한국어 문제');
+    scrollIntoView.mockClear();
+    await user.click(screen.getByRole('button', { name: '다음 문제' }));
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: 'smooth', block: 'start' });
+    await user.click(screen.getByRole('button', { name: '이전' }));
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByRole('button', { name: /2번 문제/ }));
+    expect(scrollIntoView).toHaveBeenCalledTimes(3);
   });
 
   it('saves the accumulated answers, submits, and navigates to results', async () => {
-    vi.spyOn(endpoints, 'examQuestions').mockResolvedValue(questions);
+    mockExamQuestions();
     const save = vi.spyOn(endpoints, 'saveAnswer').mockResolvedValue(undefined);
     const submit = vi.spyOn(endpoints, 'submitExam').mockResolvedValue({} as never);
     const user = userEvent.setup();
@@ -156,7 +189,7 @@ describe('MockExamSession', () => {
   });
 
   it('blocks controls while grading and exposes submission failures', async () => {
-    vi.spyOn(endpoints, 'examQuestions').mockResolvedValue([questions[0]!]);
+    mockExamQuestions([questions[0]!]);
     let rejectSubmit!: (error: Error) => void;
     vi.spyOn(endpoints, 'submitExam').mockReturnValue(new Promise((_resolve, reject) => { rejectSubmit = reject; }));
     const user = userEvent.setup();

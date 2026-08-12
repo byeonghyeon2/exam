@@ -9,6 +9,16 @@ import { WrongNotes } from '../pages/WrongNotes';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('WrongNotes', () => {
+  it('marks a fully corrected study group complete and only offers deletion', async () => {
+    vi.spyOn(endpoints, 'studyHistory').mockResolvedValue([{
+      session_id:'batch-done',certification_code:'DEA-C01',certification_name:'AWS 데이터 엔지니어',completed_at:'2026-08-08T10:00:00Z',
+      total_count:3,wrong_count:0,correct_count:3,wrong_questions:[],
+    }]);
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><WrongNotes /></MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByText('모두 맞힘')).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/다시 풀기/})).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:/삭제/})).toBeInTheDocument();
+  });
   it('shows a session summary without question details and retries only wrong questions', async () => {
     vi.spyOn(endpoints, 'studyHistory').mockResolvedValue([{
       session_id: 'batch-1', certification_code: 'DEA-C01', certification_name: 'AWS 데이터 엔지니어', completed_at: '2026-08-08T10:00:00Z',

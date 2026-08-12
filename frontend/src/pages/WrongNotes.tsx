@@ -35,10 +35,10 @@ export function WrongNotes() {
       ? <Empty>완료한 학습에서 틀린 문제가 생기면 학습 묶음이 여기에 표시됩니다.</Empty>
       : <div className="wrong-session-list">{histories.map((history, index) => <section className="wrong-session-card" key={history.session_id}>
         <header>
-          <div><span className="badge">{history.certification_code}</span><h2>학습 기록 #{histories.length - index}</h2><p>{history.certification_name} · {formatStudyTime(history.completed_at)}</p></div>
+          <div><span className={`badge ${history.wrong_count === 0 ? 'success' : ''}`}>{history.wrong_count === 0 ? '모두 맞힘' : history.certification_code}</span><h2>학습 기록 #{histories.length - index}</h2><p>{history.certification_name} · {formatStudyTime(history.completed_at)}</p></div>
           <div className="wrong-session-actions">
             <button className="button secondary delete-button" disabled={remove.isPending || retry.isPending} onClick={() => window.confirm('이 오답노트를 삭제할까요? 삭제한 기록은 복구할 수 없습니다.') && remove.mutate(history.session_id)}><Trash2 size={17} />{remove.isPending && remove.variables === history.session_id ? '삭제 중…' : '삭제'}</button>
-            <button className="button" disabled={retry.isPending || remove.isPending} onClick={() => retry.mutate(history.session_id)}><RotateCcw size={17} />{retry.isPending && retry.variables === history.session_id ? '준비 중…' : `${history.wrong_count}문제 다시 풀기`}</button>
+            {history.wrong_count > 0 && <button className="button" disabled={retry.isPending || remove.isPending} onClick={() => retry.mutate(history.session_id)}><RotateCcw size={17} />{retry.isPending && retry.variables === history.session_id ? '준비 중…' : `${history.wrong_count}문제 다시 풀기`}</button>}
           </div>
         </header>
         <div className="session-metrics" aria-label="학습 결과 요약">
