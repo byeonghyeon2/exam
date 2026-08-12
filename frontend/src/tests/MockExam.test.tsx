@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../api/queries';
+import { StudyExitGuardContext } from '../components/StudyExitGuard';
 import { MockExamSession, MockExamSetup } from '../pages/MockExam';
 import type { Question } from '../types';
 import styles from '../styles.css?raw';
@@ -32,12 +33,12 @@ function renderSetup() {
   );
 }
 
-function renderSession() {
+function renderSession(setGuard=vi.fn(),requestExit=vi.fn()) {
   return render(
-    <QueryClientProvider client={client()}><MemoryRouter initialEntries={['/mock-exam/exam-1']}><Routes>
+    <QueryClientProvider client={client()}><StudyExitGuardContext.Provider value={{setGuard,requestExit}}><MemoryRouter initialEntries={['/mock-exam/exam-1']}><Routes>
       <Route path="/mock-exam/:id" element={<MockExamSession />} />
       <Route path="/results/:id" element={<h1>결과 화면</h1>} />
-    </Routes></MemoryRouter></QueryClientProvider>,
+    </Routes></MemoryRouter></StudyExitGuardContext.Provider></QueryClientProvider>,
   );
 }
 
@@ -107,6 +108,8 @@ describe('mobile exam regression styles', () => {
     expect(compact).toContain('.choice{padding:14px13px;gap:11px;font-size:15px;line-height:1.55}');
     expect(compact).toContain('padding-bottom:calc(80px+env(safe-area-inset-bottom))');
     expect(compact).toContain('height:calc(67px+env(safe-area-inset-bottom))');
+    expect(compact).toContain('.study-question-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))');
+    expect(compact).toContain('.study-question-actionsbutton{min-width:0;padding:10px4px;font-size:12px;white-space:nowrap}');
   });
 });
 
@@ -183,9 +186,41 @@ describe('MockExamSession', () => {
 
     await user.click(await screen.findByRole('radio', { name: /첫 답안/ }));
     await user.click(screen.getByRole('button', { name: /시험 제출/ }));
+    const confirmation = screen.getByRole('dialog');
+    expect(confirmation).toHaveTextContent('1 / 2');
+    expect(confirmation).toHaveTextContent('2');
+    await user.click(screen.getByRole('button', { name: '시험 종료 및 채점' }));
     expect(await screen.findByRole('heading', { name: '결과 화면' })).toBeInTheDocument();
     expect(save).toHaveBeenCalledWith('exam-1', 1, ['A']);
     expect(submit).toHaveBeenCalledWith('exam-1');
+  });
+
+  it('cancels submission and keeps the exam open after showing unanswered numbers', async () => {
+    mockExamQuestions();
+    const submit = vi.spyOn(endpoints, 'submitExam').mockResolvedValue({} as never);
+    const user = userEvent.setup();
+    renderSession();
+
+    await screen.findByRole('radio', { name: /첫 답안/ });
+    await user.click(screen.getByRole('button', { name: /시험 제출/ }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('미응답 문제');
+    expect(screen.getByRole('dialog')).toHaveTextContent('1, 2');
+    await user.click(screen.getByRole('button', { name: '계속 풀기' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it('guards refresh, window close, and browser back while the exam is active', async () => {
+    mockExamQuestions();
+    const requestExit = vi.fn();
+    renderSession(vi.fn(), requestExit);
+    await screen.findByRole('radio', { name: /첫 답안/ });
+
+    const unload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(requestExit).toHaveBeenCalledWith('/');
   });
 
   it('blocks controls while grading and exposes submission failures', async () => {
@@ -197,6 +232,7 @@ describe('MockExamSession', () => {
 
     const submit = await screen.findByRole('button', { name: /시험 제출/ });
     await user.click(submit);
+    await user.click(screen.getByRole('button', { name: '시험 종료 및 채점' }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(submit).toBeDisabled();
     expect(screen.getByRole('radio', { name: /첫 답안/ })).toBeDisabled();

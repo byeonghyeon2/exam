@@ -69,6 +69,15 @@ describe('Study', () => {
     expect(requestExit).toHaveBeenCalledWith('/');
   });
 
+  it('warns before refresh or closing an active study page', async () => {
+    vi.spyOn(endpoints, 'study').mockResolvedValue(session);
+    renderStudy();
+    await screen.findByRole('button', { name: '학습 나가기' });
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it('scrolls the next study and retry question to the top', async () => {
     const nextSession = { ...session, total_questions: 2, current_index: 1, question: { ...session.question, id: 11, question_uid: 'DEA-11' } };
     vi.spyOn(endpoints, 'study').mockResolvedValueOnce({ ...session, total_questions: 2 }).mockResolvedValueOnce(nextSession);

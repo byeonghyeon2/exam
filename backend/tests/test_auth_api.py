@@ -39,6 +39,7 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
         database_password="",
         initial_admin_username="admin",
         initial_admin_password="strong-admin-password",
+        auth_session_minutes=30,
     )
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings
@@ -59,6 +60,7 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             assert "HttpOnly" in logged_in.headers["set-cookie"]
             assert "SameSite=lax" in logged_in.headers["set-cookie"]
             assert "Secure" not in logged_in.headers["set-cookie"]
+            assert "Max-Age=1800" in logged_in.headers["set-cookie"]
 
             created = client.post("/api/v1/admin/users", json={"username": "learner", "password": "learner-password", "role": "user"})
             assert created.status_code == 201

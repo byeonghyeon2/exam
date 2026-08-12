@@ -62,6 +62,7 @@ def test_server_runner_uses_environment_host_port_and_proxy_settings(monkeypatch
         captured.update(kwargs)
 
     monkeypatch.setattr(run, "get_settings", lambda: settings)
+    monkeypatch.setattr(run, "revoke_active_sessions", lambda: captured.update(sessions_revoked=True))
     monkeypatch.setattr(run.uvicorn, "run", fake_run)
     run.main()
 
@@ -72,6 +73,7 @@ def test_server_runner_uses_environment_host_port_and_proxy_settings(monkeypatch
         "reload": False,
         "proxy_headers": True,
         "forwarded_allow_ips": "127.0.0.1",
+        "sessions_revoked": True,
     }
 
 
@@ -79,6 +81,7 @@ def test_module_entrypoint_uses_the_same_runner(monkeypatch) -> None:
     settings = Settings(app_host="0.0.0.0", app_port=9123, app_debug=True)
     captured: dict[str, object] = {}
     monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.auth.revoke_active_sessions", lambda: None)
     monkeypatch.setattr("uvicorn.run", lambda application, **kwargs: captured.update(application=application, **kwargs))
 
     with warnings.catch_warnings():

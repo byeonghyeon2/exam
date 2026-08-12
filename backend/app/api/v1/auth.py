@@ -78,7 +78,7 @@ def login(payload: LoginRequest, response: Response, db: Db, settings: Annotated
     response.set_cookie(
         SESSION_COOKIE,
         raw_token,
-        max_age=settings.auth_session_days * 86400,
+        max_age=settings.auth_session_minutes * 60,
         httponly=True,
         secure=settings.auth_cookie_secure,
         samesite="lax",

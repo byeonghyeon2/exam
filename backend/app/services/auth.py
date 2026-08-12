@@ -4,7 +4,7 @@ import hmac
 import secrets
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -39,7 +39,7 @@ def create_session(db: Session, user: User, settings: Settings) -> tuple[AuthSes
     session = AuthSession(
         user_id=user.id,
         token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
-        expires_at=utcnow() + timedelta(days=settings.auth_session_days),
+        expires_at=utcnow() + timedelta(minutes=settings.auth_session_minutes),
     )
     db.add(session)
     return session, raw_token
@@ -58,6 +58,21 @@ def find_session(db: Session, raw_token: str) -> tuple[AuthSession, User] | None
         )
     ).first()
     return (row[0], row[1]) if row else None
+
+
+def revoke_active_sessions() -> int:
+    """Invalidate every browser session once before a server process starts."""
+    from app.db.session import SessionLocal
+
+    revoked_at = utcnow()
+    with SessionLocal() as db:
+        result = db.execute(
+            update(AuthSession)
+            .where(AuthSession.revoked_at.is_(None))
+            .values(revoked_at=revoked_at)
+        )
+        db.commit()
+        return int(result.rowcount or 0)
 
 
 def bootstrap_admin(db: Session, settings: Settings) -> bool:

@@ -5,7 +5,6 @@ from urllib.parse import quote_plus
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BACKEND_ROOT.parent
 
@@ -34,7 +33,7 @@ class Settings(BaseSettings):
     auth_required: bool = True
     initial_admin_username: str = "admin"
     initial_admin_password: str = ""
-    auth_session_days: int = Field(30, ge=1, le=365)
+    auth_session_minutes: int = Field(30, ge=5, le=1440)
     auth_cookie_secure: bool = False
     question_rate_limit_requests: int = Field(60, ge=1, le=10000)
     question_rate_limit_window_seconds: int = Field(60, ge=1, le=3600)

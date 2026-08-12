@@ -162,7 +162,7 @@ Invoke-RestMethod http://localhost:8000/api/v1/health
 AUTH_REQUIRED=true
 INITIAL_ADMIN_USERNAME=admin
 INITIAL_ADMIN_PASSWORD=충분히-긴-초기-비밀번호
-AUTH_SESSION_DAYS=30
+AUTH_SESSION_MINUTES=30
 AUTH_COOKIE_SECURE=false
 ```
 

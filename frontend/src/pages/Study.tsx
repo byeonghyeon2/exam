@@ -51,6 +51,7 @@ export function Study() {
       return;
     }
     setGuard({
+      kind: 'study',
       sessionId: id,
       answeredCount,
       saveAndLeave: () => endpoints.leaveStudy(id, true),
@@ -63,6 +64,17 @@ export function Study() {
       setGuard(current => current?.sessionId === id ? null : current);
     };
   }, [answeredCount, id, sessionActive, setGuard]);
+  useEffect(() => {
+    if (!sessionActive || !id) return;
+    const marker = { ...window.history.state, certflowGuard: `study-${id}` };
+    window.history.pushState(marker, '', window.location.href);
+    const warnOnBack = () => {
+      window.history.pushState(marker, '', window.location.href);
+      requestExit('/');
+    };
+    window.addEventListener('popstate', warnOnBack);
+    return () => window.removeEventListener('popstate', warnOnBack);
+  }, [id, requestExit, sessionActive]);
 
   if (!id) {
     return create.isError
@@ -172,7 +184,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
       </div>}
       {explanation.data && <ExplanationCard explanation={explanation.data} question={question} selected={selected} correctAnswers={result?.correct_answers ?? []} />}
       {explanation.isError && <div className="ai-explanation-error" role="alert"><b>AI 해설을 생성하지 못했습니다.</b><span>{explanation.error.message}</span><button type="button" onClick={() => explanation.mutate()}>다시 시도</button></div>}
-      <div className="actions">
+      <div className="actions study-question-actions">
         <button type="button" onClick={onExit}>학습 나가기</button>
         <button className="button secondary" type="button" onClick={() => setReportOpen(true)}>문제 신고</button>
         {!result
