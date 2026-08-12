@@ -1,11 +1,12 @@
 import runpy
 import warnings
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from httpx import Response
 
 from app import run
-from app.core.config import Settings
+from app.core.config import BACKEND_ROOT, PROJECT_ROOT, Settings
 from app.main import create_app
 
 
@@ -15,6 +16,17 @@ def cors_response(settings: Settings, origin: str) -> Response:
             "/api/v1/health",
             headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
         )
+
+
+def test_environment_files_are_absolute_and_independent_of_working_directory(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    env_files = tuple(Path(path) for path in Settings.model_config["env_file"])
+
+    assert env_files == (PROJECT_ROOT / ".env", BACKEND_ROOT / ".env")
+    assert all(path.is_absolute() for path in env_files)
 
 
 def test_local_cors_allows_private_network_development() -> None:
