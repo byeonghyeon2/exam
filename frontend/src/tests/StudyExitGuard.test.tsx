@@ -19,12 +19,12 @@ function ActiveStudy({saveAndLeave,discardAndLeave}:{saveAndLeave:()=>Promise<un
   return <h1>학습 화면</h1>;
 }
 
-function ActiveExam(){
+function ActiveExam({abandon}:{abandon:()=>Promise<unknown>}){
   const {setGuard}=useStudyExitGuard();
   useEffect(()=>{
-    setGuard({kind:'exam',sessionId:'exam-1',answeredCount:1,totalCount:3,unansweredNumbers:[2,3]});
+    setGuard({kind:'exam',sessionId:'exam-1',answeredCount:1,totalCount:3,unansweredNumbers:[2,3],abandon});
     return ()=>setGuard(current=>current?.sessionId==='exam-1'?null:current);
-  },[setGuard]);
+  },[abandon,setGuard]);
   return <h1>모의고사 화면</h1>;
 }
 
@@ -83,7 +83,8 @@ describe('Mock exam exit guard',()=>{
   it('shows progress and unanswered numbers before menu navigation',async()=>{
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response(admin)));
     const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
-    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/mock-exam/1']}><Routes><Route element={<Layout/>}><Route path="mock-exam/:id" element={<ActiveExam/>}/><Route index element={<h1>대시보드 화면</h1>}/></Route></Routes></MemoryRouter></QueryClientProvider>);
+    const abandon=vi.fn().mockResolvedValue({});
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/mock-exam/1']}><Routes><Route element={<Layout/>}><Route path="mock-exam/:id" element={<ActiveExam abandon={abandon}/>}/><Route index element={<h1>대시보드 화면</h1>}/></Route></Routes></MemoryRouter></QueryClientProvider>);
 
     await userEvent.click(await screen.findByRole('link',{name:'대시보드'}));
     const dialog=screen.getByRole('dialog');
@@ -94,6 +95,7 @@ describe('Mock exam exit guard',()=>{
     expect(screen.getByRole('heading',{name:'모의고사 화면'})).toBeInTheDocument();
     await userEvent.click(screen.getByRole('link',{name:'대시보드'}));
     await userEvent.click(screen.getByRole('button',{name:'시험 종료'}));
+    expect(abandon).toHaveBeenCalledOnce();
     expect(await screen.findByRole('heading',{name:'대시보드 화면'})).toBeInTheDocument();
   });
 });

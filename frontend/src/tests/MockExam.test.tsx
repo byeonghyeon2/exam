@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../api/queries';
+import { ApiError } from '../api/client';
 import { StudyExitGuardContext } from '../components/StudyExitGuard';
 import { MockExamSession, MockExamSetup } from '../pages/MockExam';
 import type { Question } from '../types';
@@ -38,6 +39,7 @@ function renderSession(setGuard=vi.fn(),requestExit=vi.fn()) {
     <QueryClientProvider client={client()}><StudyExitGuardContext.Provider value={{setGuard,requestExit}}><MemoryRouter initialEntries={['/mock-exam/exam-1']}><Routes>
       <Route path="/mock-exam/:id" element={<MockExamSession />} />
       <Route path="/results/:id" element={<h1>결과 화면</h1>} />
+      <Route path="/" element={<h1>대시보드 화면</h1>} />
     </Routes></MemoryRouter></StudyExitGuardContext.Provider></QueryClientProvider>,
   );
 }
@@ -114,6 +116,27 @@ describe('mobile exam regression styles', () => {
 });
 
 describe('MockExamSession', () => {
+  it('explains an invalid submitted-exam revisit and replaces it with the dashboard', async () => {
+    vi.spyOn(endpoints, 'examQuestions').mockRejectedValue(new ApiError('Exam is already submitted', 409));
+    const user = userEvent.setup();
+    renderSession();
+
+    expect(await screen.findByRole('dialog', { name: '잘못된 접근입니다.' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '확인' }));
+    expect(await screen.findByRole('heading', { name: '대시보드 화면' })).toBeInTheDocument();
+  });
+
+  it('blocks access when the exam becomes invalid while loading one question', async () => {
+    vi.spyOn(endpoints, 'examQuestions').mockResolvedValue({ total: 1, question_ids: [1] });
+    vi.spyOn(endpoints, 'examQuestion').mockRejectedValue(new ApiError('Exam is already submitted', 409));
+    const user = userEvent.setup();
+    renderSession();
+
+    expect(await screen.findByRole('dialog', { name: '잘못된 접근입니다.' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '확인' }));
+    expect(await screen.findByRole('heading', { name: '대시보드 화면' })).toBeInTheDocument();
+  });
+
   it('shows loading, request errors, and an empty-exam error explicitly', async () => {
     let resolveQuestions!: (value: {total:number;question_ids:number[]}) => void;
     vi.spyOn(endpoints, 'examQuestions').mockReturnValue(new Promise(resolve => { resolveQuestions = resolve; }));

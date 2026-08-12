@@ -1,6 +1,9 @@
 import type {ReactNode} from 'react'; import {AlertCircle,LoaderCircle} from 'lucide-react';
+import {ApiError} from '../api/client';
 export function PageHeader({eyebrow,title,description,action}:{eyebrow?:string;title:string;description?:string;action?:ReactNode}){return <header className="page-head"><div>{eyebrow&&<p className="eyebrow">{eyebrow}</p>}<h1>{title}</h1>{description&&<p className="muted">{description}</p>}</div>{action}</header>}
 export function Loading({label='불러오는 중'}:{label?:string}){return <div className="state" role="status"><LoaderCircle className="spin"/><strong>{label}</strong><span>잠시만 기다려 주세요.</span></div>}
 export function ErrorState({error,retry}:{error:unknown;retry?:()=>void}){return <div className="state error" role="alert"><AlertCircle/><strong>데이터를 불러오지 못했습니다</strong><span>{error instanceof Error?error.message:'API 연결을 확인해 주세요.'}</span>{retry&&<button onClick={retry}>다시 시도</button>}</div>}
+export function isInvalidSessionError(error:unknown){return error instanceof ApiError&&(error.status===404||error.status===409)}
+export function InvalidAccess({onConfirm}:{onConfirm:()=>void}){return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="invalid-access-title"><p className="eyebrow">접근 안내</p><h2 id="invalid-access-title">잘못된 접근입니다.</h2><p>종료되었거나 접근할 수 없는 화면입니다. 대시보드로 이동합니다.</p><div className="actions"><button className="button" onClick={onConfirm}>확인</button></div></section></div>}
 export function Empty({children}:{children:ReactNode}){return <div className="state"><strong>아직 데이터가 없습니다</strong><span>{children}</span></div>}
 export function Progress({value,label}:{value:number;label:string}){return <div><div className="progress-label"><span>{label}</span><b>{Math.round(value)}%</b></div><div className="progress" role="progressbar" aria-label={label} aria-valuenow={value}><i style={{width:`${Math.min(100,value)}%`}}/></div></div>}

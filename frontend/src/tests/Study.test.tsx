@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../api/queries';
+import { ApiError } from '../api/client';
 import { StudyExitGuardContext } from '../components/StudyExitGuard';
 import { Study } from '../pages/Study';
 
@@ -37,6 +38,7 @@ function renderStudy(requestExit = vi.fn()) {
         <Routes>
           <Route path="/study/:id" element={<Study />} />
           <Route path="/wrong-notes" element={<h1>오답노트 화면</h1>} />
+          <Route path="/" element={<h1>대시보드 화면</h1>} />
         </Routes>
       </MemoryRouter></StudyExitGuardContext.Provider>
     </QueryClientProvider>,
@@ -80,6 +82,16 @@ describe('Study', () => {
     const event = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('explains an invalid completed-session revisit and replaces it with the dashboard', async () => {
+    vi.spyOn(endpoints, 'study').mockRejectedValue(new ApiError('Study session is no longer active', 409));
+    const user = userEvent.setup();
+    renderStudy();
+
+    expect(await screen.findByRole('dialog', { name: '잘못된 접근입니다.' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '확인' }));
+    expect(await screen.findByRole('heading', { name: '대시보드 화면' })).toBeInTheDocument();
   });
 
   it('scrolls the next study and retry question to the top', async () => {

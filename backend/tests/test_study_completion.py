@@ -119,6 +119,7 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
                 "wrong_count": 1,
                 "finalized": True,
             }
+            assert client.get("/api/v1/study/sessions/batch-session").status_code == 409
 
             history = client.get("/api/v1/study/history")
             assert history.status_code == 200
@@ -139,6 +140,7 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
                 json={"selected_answers": ["B"]},
             ).status_code == 200
             assert client.post(f"/api/v1/study/sessions/{retry_session_id}/complete").status_code == 200
+            assert client.get(f"/api/v1/study/sessions/{retry_session_id}").status_code == 409
 
             history_after_wrong_retry = client.get("/api/v1/study/history").json()
             assert len(history_after_wrong_retry) == 1

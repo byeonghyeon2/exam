@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -61,15 +62,21 @@ def test_mock_exam_delivers_only_one_owned_question_body_at_a_time() -> None:
         db.flush()
         exam = MockExam(
             user_id=owner.id, certification_id=certification.id, question_count=2,
-            duration_minutes=10, expires_at=utcnow(), passing_score=70,
+            duration_minutes=10, expires_at=utcnow() + timedelta(minutes=10), passing_score=70,
             questions=[
                 MockExamQuestion(question_id=questions[0].id, question_order=1),
                 MockExamQuestion(question_id=questions[1].id, question_order=2),
             ],
         )
         db.add(exam)
+        abandoned_exam = MockExam(
+            user_id=owner.id, certification_id=certification.id, question_count=1,
+            duration_minutes=10, expires_at=utcnow() + timedelta(minutes=10), passing_score=70,
+            questions=[MockExamQuestion(question_id=questions[2].id, question_order=1)],
+        )
+        db.add(abandoned_exam)
         db.commit()
-        owner_id, other_id, exam_id = owner.id, other.id, exam.id
+        owner_id, other_id, exam_id, abandoned_exam_id = owner.id, other.id, exam.id, abandoned_exam.id
         assigned_ids = [questions[0].id, questions[1].id]
         unassigned_id = questions[2].id
 
@@ -107,6 +114,15 @@ def test_mock_exam_delivers_only_one_owned_question_body_at_a_time() -> None:
             assert client.get(
                 f"/api/v1/mock-exams/{exam_id}/questions/{unassigned_id}"
             ).status_code == 404
+
+            assert client.post(f"/api/v1/mock-exams/{exam_id}/submit").status_code == 200
+            assert client.get(f"/api/v1/mock-exams/{exam_id}/questions").status_code == 409
+            assert client.get(
+                f"/api/v1/mock-exams/{exam_id}/questions/{assigned_ids[0]}"
+            ).status_code == 409
+
+            assert client.post(f"/api/v1/mock-exams/{abandoned_exam_id}/leave").status_code == 200
+            assert client.get(f"/api/v1/mock-exams/{abandoned_exam_id}/questions").status_code == 409
 
             active_user_id[0] = other_id
             assert client.get(f"/api/v1/mock-exams/{exam_id}/questions").status_code == 404

@@ -67,7 +67,4 @@
 }
 .protected-content{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .protected-content input,.protected-content textarea,.protected-content select{-webkit-user-select:text;user-select:text}
-.content-watermark{position:fixed;inset:68px 0 0 244px;z-index:50;display:grid;grid-template-columns:repeat(3,1fr);align-content:space-around;justify-items:center;overflow:hidden;pointer-events:none;opacity:.045;transform:rotate(-18deg);transform-origin:center;color:var(--text);font-size:13px;font-weight:800;letter-spacing:1px}
-.content-watermark span{white-space:nowrap}
-@media(max-width:760px){.content-watermark{inset:68px 0 67px 0;grid-template-columns:repeat(2,1fr);font-size:10px}}
 @media print{body *{visibility:hidden!important}.protected-content::after{content:'인쇄가 제한된 콘텐츠입니다.';position:fixed;inset:0;display:grid;place-items:center;visibility:visible!important;color:#111;font-size:20px}}

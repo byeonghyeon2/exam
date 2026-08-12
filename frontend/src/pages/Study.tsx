@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
 import type { Explanation, Question, StudySession, Submission } from '../types';
-import { ErrorState, Loading, PageHeader, Progress } from '../components/common';
+import { ErrorState, InvalidAccess, isInvalidSessionError, Loading, PageHeader, Progress } from '../components/common';
 import { ReportModal } from '../components/ReportModal';
 import { useStudyExitGuard } from '../components/StudyExitGuard';
 
@@ -42,7 +42,12 @@ export function Study() {
   });
   const complete = useMutation({
     mutationFn: () => endpoints.completeStudy(id!),
-    onSuccess: () => session.refetch(),
+    onSuccess: summary => queryClient.setQueryData<StudySession>(['study', id], current => current ? ({
+      ...current,
+      current_index: summary.answered_count,
+      question: undefined,
+      summary,
+    }) : current),
   });
   const sessionActive = Boolean(id && session.data && !session.data.summary?.finalized);
   const answeredCount = (session.data?.current_index ?? 0) + (currentAnswered ? 1 : 0);
@@ -83,7 +88,9 @@ export function Study() {
       : <Loading label="학습 세션을 준비하는 중" />;
   }
   if (session.isLoading) return <Loading />;
-  if (session.isError) return <ErrorState error={session.error} retry={() => void session.refetch()} />;
+  if (session.isError) return isInvalidSessionError(session.error)
+    ? <InvalidAccess onConfirm={() => navigate('/', { replace: true })} />
+    : <ErrorState error={session.error} retry={() => void session.refetch()} />;
 
   return (
     <QuestionView

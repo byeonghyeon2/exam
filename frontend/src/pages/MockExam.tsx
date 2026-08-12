@@ -3,7 +3,7 @@ import { Clock3, LoaderCircle } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
-import { ErrorState, Loading, PageHeader, Progress } from '../components/common';
+import { ErrorState, InvalidAccess, isInvalidSessionError, Loading, PageHeader, Progress } from '../components/common';
 import { useStudyExitGuard } from '../components/StudyExitGuard';
 
 export function MockExamSetup() {
@@ -54,7 +54,7 @@ export function MockExamSession() {
       setGuard(current => current?.sessionId === id ? null : current);
       return;
     }
-    setGuard({kind:'exam',sessionId:id,answeredCount,totalCount:questions.data.total,unansweredNumbers});
+    setGuard({kind:'exam',sessionId:id,answeredCount,totalCount:questions.data.total,unansweredNumbers,abandon:()=>endpoints.leaveExam(id)});
     const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => {
@@ -84,9 +84,13 @@ export function MockExamSession() {
   }, [submitExam, submit.isPending]);
 
   if (questions.isLoading) return <Loading label="시험 문제를 배정하는 중" />;
-  if (questions.isError) return <ErrorState error={questions.error} />;
+  if (questions.isError) return isInvalidSessionError(questions.error)
+    ? <InvalidAccess onConfirm={() => navigate('/', { replace: true })} />
+    : <ErrorState error={questions.error} />;
   if (currentQuestion.isLoading) return <Loading label="시험 문제를 불러오는 중" />;
-  if (currentQuestion.isError) return <ErrorState error={currentQuestion.error} />;
+  if (currentQuestion.isError) return isInvalidSessionError(currentQuestion.error)
+    ? <InvalidAccess onConfirm={() => navigate('/', { replace: true })} />
+    : <ErrorState error={currentQuestion.error} />;
   const question = currentQuestion.data;
   if (!question) return <ErrorState error={new Error('시험 문제가 없습니다.')} />;
   const selected = answers[question.id] ?? [];

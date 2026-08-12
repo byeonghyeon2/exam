@@ -17,7 +17,7 @@ export function shouldBlockShortcut(event: KeyboardEvent): boolean {
   return BLOCKED_CTRL_KEYS.has(key) || (event.shiftKey && BLOCKED_DEVTOOLS_KEYS.has(key));
 }
 
-export function ContentProtection({ username, children }: { username: string; children: ReactNode }) {
+export function ContentProtection({ children }: { children: ReactNode }) {
   useEffect(() => {
     const prevent = (event: Event) => event.preventDefault();
     const preventPasteOutsideEditor = (event: ClipboardEvent) => {
@@ -42,11 +42,5 @@ export function ContentProtection({ username, children }: { username: string; ch
     };
   }, []);
 
-  const label = `${username} · CERTFLOW`;
-  return <div className="protected-content">
-    {children}
-    <div className="content-watermark" data-testid="content-watermark" aria-hidden="true">
-      {Array.from({ length: 18 }, (_, index) => <span key={index}>{label}</span>)}
-    </div>
-  </div>;
+  return <div className="protected-content">{children}</div>;
 }

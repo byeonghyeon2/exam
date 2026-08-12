@@ -1,5 +1,5 @@
 import random
-from datetime import timedelta
+from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
@@ -144,6 +144,7 @@ def create_study(payload: StudySessionCreate, db: Db, user: CurrentUser) -> Stud
 @router.get("/study/sessions/{session_id}", response_model=None)
 def study_session(session_id: str, db: Db, user: CurrentUser) -> dict[str, Any]:
     record = get_study_record(db, session_id, user); ids = record.question_ids_json
+    if record.status != "in_progress": raise HTTPException(409, "Study session is no longer active")
     attempts = list(db.scalars(select(StudyAttempt).where(StudyAttempt.session_id == session_id, StudyAttempt.user_id == owner_id(user))))
     attempted = {attempt.question_id for attempt in attempts}
     next_id = next((question_id for question_id in ids if question_id not in attempted), None) if record.status == "in_progress" else None
@@ -392,6 +393,7 @@ def mock_exam(exam_id: int, db: Db, user: CurrentUser) -> MockExam: return get_e
 def mock_questions(exam_id: int, db: Db, user: CurrentUser) -> dict[str, Any]:
     """Return navigation metadata without exposing every assigned question body."""
     exam = get_exam(db, exam_id, user)
+    ensure_open(exam)
     question_ids = [item.question_id for item in exam.questions]
     return {"total": len(question_ids), "question_ids": question_ids}
 
@@ -399,6 +401,7 @@ def mock_questions(exam_id: int, db: Db, user: CurrentUser) -> dict[str, Any]:
 @router.get("/mock-exams/{exam_id}/questions/{question_id}", response_model=QuestionOut)
 def mock_question(exam_id: int, question_id: int, db: Db, user: CurrentUser) -> Question:
     exam = get_exam(db, exam_id, user)
+    ensure_open(exam)
     if not any(item.question_id == question_id for item in exam.questions):
         raise HTTPException(404, "Question not assigned to exam")
     question = db.scalar(
@@ -413,7 +416,8 @@ def mock_question(exam_id: int, question_id: int, db: Db, user: CurrentUser) -> 
 
 def ensure_open(exam: MockExam) -> None:
     if exam.status != "in_progress": raise HTTPException(409, "Exam is already submitted")
-    if utcnow() >= exam.expires_at: raise HTTPException(409, "Exam time has expired; submit the exam")
+    expires_at = exam.expires_at if exam.expires_at.tzinfo else exam.expires_at.replace(tzinfo=UTC)
+    if utcnow() >= expires_at: raise HTTPException(409, "Exam time has expired; submit the exam")
 
 
 @router.put("/mock-exams/{exam_id}/answers/{question_id}")
@@ -439,6 +443,13 @@ def submit_mock(exam_id: int, db: Db, user: CurrentUser) -> dict[str, Any]:
         question = get_question(db, item.question_id); item.is_correct = score_answer(item.selected_answers_json or [], current_answers(question)); correct_count += int(item.is_correct); update_wrong_note(db, owner_id(user), item.question_id, item.is_correct)
     exam.raw_score = percentage(correct_count, exam.question_count); exam.scaled_score = scaled_score(correct_count, exam.question_count); exam.result = "pass" if (exam.scaled_score if exam.passing_score > 100 else exam.raw_score) >= exam.passing_score else "fail"; exam.status = "submitted"; exam.submitted_at = utcnow(); db.commit()
     return {"correct_count": correct_count, "total": exam.question_count, "total_count": exam.question_count, "raw_score": exam.raw_score, "scaled_score": exam.scaled_score, "passing_score": exam.passing_score, "result": exam.result}
+
+
+@router.post("/mock-exams/{exam_id}/leave")
+def leave_mock_exam(exam_id: int, db: Db, user: CurrentUser) -> dict[str, str]:
+    exam = get_exam(db, exam_id, user); ensure_open(exam)
+    exam.status = "abandoned"; db.commit()
+    return {"status": "abandoned"}
 
 
 @router.get("/mock-exams/{exam_id}/result")

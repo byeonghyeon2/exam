@@ -17,7 +17,7 @@ export function App() {
   const me = useQuery({ queryKey: ['me'], queryFn: endpoints.me, retry: false });
   if (me.isLoading) return <main className="login-page"><Loading /></main>;
   if (!me.data) return <Routes><Route path="*" element={<Login />} /></Routes>;
-  return <ContentProtection username={me.data.username}><Routes>
+  return <ContentProtection><Routes>
     <Route element={<Layout />}>
       <Route index element={<Dashboard />} />
       <Route path="certifications" element={<Certifications />} />

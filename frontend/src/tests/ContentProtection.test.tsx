@@ -6,7 +6,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('ContentProtection', () => {
   it('blocks extraction gestures and common source/devtools shortcuts', () => {
-    render(<ContentProtection username="learner"><p>보호할 문제</p></ContentProtection>);
+    render(<ContentProtection><p>보호할 문제</p></ContentProtection>);
     const content = screen.getByText('보호할 문제');
 
     for (const event of [
@@ -31,7 +31,7 @@ describe('ContentProtection', () => {
   });
 
   it('allows ordinary typing and paste in editable fields while blocking page paste', () => {
-    render(<ContentProtection username="learner"><input aria-label="관리 입력" /><p>보호할 문제</p></ContentProtection>);
+    render(<ContentProtection><input aria-label="관리 입력" /><p>보호할 문제</p></ContentProtection>);
     const input = screen.getByLabelText('관리 입력');
     const pagePaste = new Event('paste', { bubbles: true, cancelable: true });
     screen.getByText('보호할 문제').dispatchEvent(pagePaste);
@@ -43,10 +43,9 @@ describe('ContentProtection', () => {
     fireEvent.keyDown(input, { key: 'c', ctrlKey: true });
   });
 
-  it('renders a non-interactive user watermark', () => {
-    render(<ContentProtection username="learner"><p>내용</p></ContentProtection>);
-    const watermark = screen.getByTestId('content-watermark');
-    expect(watermark).toHaveAttribute('aria-hidden', 'true');
-    expect(watermark).toHaveTextContent('learner');
+  it('does not expose the signed-in account in a background watermark', () => {
+    render(<ContentProtection><p>내용</p></ContentProtection>);
+    expect(screen.queryByTestId('content-watermark')).not.toBeInTheDocument();
+    expect(document.querySelector('.content-watermark')).not.toBeInTheDocument();
   });
 });
