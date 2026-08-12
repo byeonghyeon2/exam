@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../api/queries';
 import { Admin } from '../pages/Admin';
@@ -16,7 +16,12 @@ function mockAdminData() {
     id: 1, username: 'user', role: 'user', is_active: true,
     password_managed_by_environment: false, created_at: '2026-08-09T00:00:00Z', last_login_at: null,
   }]);
-  vi.spyOn(endpoints, 'adminReports').mockResolvedValue([]);
+  vi.spyOn(endpoints, 'adminReports').mockResolvedValue([{
+    id: 7, question_id: 149, question_uid: 'AWS-DEA-C01-000149',
+    question_ko: '긴 문제 내용', question_en: 'Long question', report_type: 'explanation_error',
+    description: '해설에 오타 존재', status: 'received', resolution_note: null,
+    created_at: '2026-08-12T00:14:22Z', resolved_at: null,
+  }]);
   vi.spyOn(endpoints, 'mockReadiness').mockResolvedValue({
     ready: true, question_count: 65, unclassified: 0,
     domains: [
@@ -45,6 +50,10 @@ describe('Admin mobile layout', () => {
     expect(screen.getByText('미분류 문제가 없습니다.')).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '상태/신뢰도' })).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '사용 가능' })).toBeInTheDocument();
+    const reports = within(screen.getByRole('heading', { name: '문제 신고' }).closest('section')!);
+    expect(reports.getByRole('columnheader', { name: '접수 시각' })).toHaveClass('report-time');
+    expect(reports.getByRole('columnheader', { name: '유형' })).toHaveClass('report-type');
+    expect(reports.queryByRole('columnheader', { name: '상태' })).not.toBeInTheDocument();
   });
 
   it('keeps admin responsive rules scoped to the admin page', () => {
@@ -53,6 +62,8 @@ describe('Admin mobile layout', () => {
     expect(compact).toContain('.admin-responsive-tabletd::before{content:attr(data-label)');
     expect(compact).toContain('.admin-readinesstable{table-layout:fixed;font-size:12px}');
     expect(compact).toContain('.admin-domain-counts.metrics{grid-template-columns:1fr;gap:8px}');
+    expect(compact).toContain('.admin-reports-table.report-time{width:145px;min-width:145px;white-space:nowrap}');
+    expect(compact).toContain('.admin-reports-table.report-type{width:92px;min-width:92px;white-space:nowrap;word-break:keep-all}');
     expect(compact).toContain('@media(max-width:380px){.admin-page.panel{padding:18px13px}');
   });
 });

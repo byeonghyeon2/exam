@@ -19,6 +19,9 @@
 
 /* 관리자 화면은 모바일에서 넓은 표를 정보 카드로 전환한다. */
 .admin-page,.admin-page .panel,.admin-domain-counts .metrics article{min-width:0}
+.admin-reports-table .report-time{width:145px;min-width:145px;white-space:nowrap}
+.admin-reports-table .report-type{width:92px;min-width:92px;white-space:nowrap;word-break:keep-all}
+.admin-reports-table .report-description{width:24%}
 @media(max-width:760px){
   .admin-page .page-head{margin-bottom:22px}
   .admin-page .panel{padding:20px 16px}
@@ -51,6 +54,8 @@
   .admin-responsive-table td button{width:100%;font-size:14px}
   .admin-responsive-table .actions{margin:0;display:grid;grid-template-columns:1fr;gap:8px}
   .admin-responsive-table select{width:100%;min-width:0;padding:10px}
+  .admin-reports-table .report-time,.admin-reports-table .report-type{width:auto;min-width:0;white-space:normal}
+  .admin-reports-table .report-description{width:auto}
   .report-description{min-width:0}
 }
 @media(max-width:380px){
