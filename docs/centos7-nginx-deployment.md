@@ -10,6 +10,8 @@ Create `frontend/.env.production` on the server. This file is ignored by Git.
 VITE_API_BASE_URL=/api/v1
 ```
 
+로컬 Vite 개발 서버에서도 브라우저는 같은 `/api/v1` 경로를 사용합니다. `frontend/.env`의 `VITE_API_PROXY_TARGET=http://127.0.0.1:8000` 값은 개발 서버에만 적용되며 Production 빌드의 API 주소를 바꾸지 않습니다.
+
 Build and deploy the static files. Vite environment variables are compiled at build time, so rebuild whenever they change.
 
 ```bash
