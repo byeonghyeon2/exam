@@ -131,7 +131,9 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
             retry = client.post("/api/v1/study/history/batch-session/retry")
             assert retry.status_code == 201
             assert retry.json()["question_ids"] == [question_ids[0]]
+            assert retry.json()["retry_of_session_id"] == "batch-session"
             retry_session_id = retry.json()["id"]
+            assert client.get(f"/api/v1/study/sessions/{retry_session_id}").json()["retry_of_session_id"] == "batch-session"
             assert client.post(
                 f"/api/v1/study/questions/{question_ids[0]}/submit?session_id={retry_session_id}",
                 json={"selected_answers": ["B"]},
@@ -145,6 +147,7 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
 
             retry_again = client.post("/api/v1/study/history/batch-session/retry")
             assert retry_again.status_code == 201
+            assert retry_again.json()["retry_of_session_id"] == "batch-session"
             retry_again_session_id = retry_again.json()["id"]
             assert client.post(
                 f"/api/v1/study/questions/{question_ids[0]}/submit?session_id={retry_again_session_id}",

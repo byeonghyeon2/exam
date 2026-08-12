@@ -151,6 +151,7 @@ def study_session(session_id: str, db: Db, user: CurrentUser) -> dict[str, Any]:
     return {
         "id": session_id,
         "question_ids": ids,
+        "retry_of_session_id": record.retry_of_session_id,
         "total_questions": len(ids),
         "current_index": len(attempted),
         "question": question,
@@ -286,7 +287,7 @@ def retry_study_history(session_id: str, db: Db, user: CurrentUser) -> StudySess
         raise HTTPException(409 if completed else 404, "There are no remaining wrong answers to retry")
     first_question = db.get(Question, question_ids[0]); retry_session_id = str(uuid4())
     db.add(StudySessionRecord(session_id=retry_session_id, user_id=owner_id(user), certification_id=first_question.certification_id, question_ids_json=question_ids, retry_of_session_id=session_id)); db.commit()
-    return StudySessionOut(id=retry_session_id, question_ids=question_ids)
+    return StudySessionOut(id=retry_session_id, question_ids=question_ids, retry_of_session_id=session_id)
 
 
 def rebuild_wrong_note(db: Session, user_id: int, question_id: int) -> None:

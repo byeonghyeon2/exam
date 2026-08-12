@@ -108,6 +108,7 @@ class StudySessionCreate(BaseModel):
 class StudySessionOut(BaseModel):
     id: str
     question_ids: list[int]
+    retry_of_session_id: str | None = None
 
 
 class StudyLeaveRequest(BaseModel):

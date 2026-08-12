@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -14,6 +14,7 @@ export function Study() {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { setGuard, requestExit } = useStudyExitGuard();
   const [currentAnswered, setCurrentAnswered] = useState(false);
   const certificationCode = new URLSearchParams(location.search).get('cert') ?? 'DEA-C01';
@@ -95,11 +96,15 @@ export function Study() {
       onAnswered={() => setCurrentAnswered(true)}
       completeError={complete.error}
       onExit={() => requestExit('/')}
+      onReturnToWrongNotes={async () => {
+        await queryClient.invalidateQueries({ queryKey: ['study-history'], refetchType: 'all' });
+        navigate('/wrong-notes');
+      }}
     />
   );
 }
 
-function QuestionView({ question, sessionId, session, onNext, onComplete, onAnswered, onExit, completeError }: {
+function QuestionView({ question, sessionId, session, onNext, onComplete, onAnswered, onExit, onReturnToWrongNotes, completeError }: {
   question?: Question;
   sessionId: string;
   session: StudySession;
@@ -107,6 +112,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
   onComplete: () => Promise<unknown>;
   onAnswered: () => void;
   onExit: () => void;
+  onReturnToWrongNotes: () => Promise<void>;
   completeError: Error | null;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
@@ -145,7 +151,8 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
     if (!summary?.finalized) {
       return <div className="state"><strong>모든 문제를 풀었습니다</strong><span>오답 노트를 한 번에 정리해 주세요.</span><button className="button" disabled={movingNext} onClick={() => void moveNext(true)}>학습 결과 정리</button>{completeError&&<span className="form-error">{completeError.message}</span>}</div>;
     }
-    return <div className="state study-summary"><strong>학습을 완료했습니다</strong><div className="metrics"><article><small>총 풀이</small><b>{summary.answered_count}</b></article><article><small>정답</small><b>{summary.correct_count}</b></article><article><small>오답</small><b>{summary.wrong_count}</b></article></div><span>틀린 문제 {summary.wrong_count}개가 오답 노트에 한 번에 반영되었습니다.</span></div>;
+    const masteredRetry = Boolean(session.retry_of_session_id && summary.wrong_count === 0);
+    return <div className="state study-summary"><strong>학습을 완료했습니다</strong><div className="metrics"><article><small>총 풀이</small><b>{summary.answered_count}</b></article><article><small>정답</small><b>{summary.correct_count}</b></article><article><small>오답</small><b>{summary.wrong_count}</b></article></div><span>{masteredRetry ? '모든 오답을 맞혔습니다. 완료한 오답노트를 확인해 주세요.' : `틀린 문제 ${summary.wrong_count}개가 오답 노트에 한 번에 반영되었습니다.`}</span>{masteredRetry && <button className="button" type="button" onClick={() => void onReturnToWrongNotes()}>오답노트로 돌아가기</button>}</div>;
   }
 
   const multiple = question.question_type === 'multiple_response';

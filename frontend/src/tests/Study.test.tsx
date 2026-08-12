@@ -31,13 +31,17 @@ const session = {
 
 function renderStudy(requestExit = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <StudyExitGuardContext.Provider value={{setGuard:vi.fn(),requestExit}}><MemoryRouter initialEntries={['/study/session-1']}>
-        <Routes><Route path="/study/:id" element={<Study />} /></Routes>
+        <Routes>
+          <Route path="/study/:id" element={<Study />} />
+          <Route path="/wrong-notes" element={<h1>오답노트 화면</h1>} />
+        </Routes>
       </MemoryRouter></StudyExitGuardContext.Provider>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 
 afterEach(() => {
@@ -205,5 +209,30 @@ describe('Study', () => {
     expect(screen.getByText('총 풀이')).toBeInTheDocument();
     expect(screen.getByText('오답')).toBeInTheDocument();
     expect(screen.getByText(/틀린 문제 1개가 오답 노트에 한 번에 반영/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '오답노트로 돌아가기' })).not.toBeInTheDocument();
+  });
+
+  it('returns to a refreshed wrong-note list after mastering every retry question', async () => {
+    vi.spyOn(endpoints, 'study').mockResolvedValue({
+      ...session,
+      retry_of_session_id: 'wrong-note-session',
+      current_index: 1,
+      question: undefined,
+      summary: {
+        total_questions: 1,
+        answered_count: 1,
+        correct_count: 1,
+        wrong_count: 0,
+        finalized: true,
+      },
+    });
+    const user = userEvent.setup();
+    const { client } = renderStudy();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+
+    await user.click(await screen.findByRole('button', { name: '오답노트로 돌아가기' }));
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['study-history'], refetchType: 'all' });
+    expect(await screen.findByRole('heading', { name: '오답노트 화면' })).toBeInTheDocument();
   });
 });
