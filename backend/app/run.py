@@ -1,13 +1,10 @@
 import uvicorn
 
 from app.core.config import get_settings
-from app.services.auth import revoke_active_sessions
 
 
 def main() -> None:
     settings = get_settings()
-    if settings.auth_required:
-        revoke_active_sessions()
     uvicorn.run(
         "app.main:app",
         host=settings.app_host,

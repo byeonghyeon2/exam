@@ -168,7 +168,7 @@ AUTH_COOKIE_SECURE=false
 
 최초 admin은 DB에 admin 역할 계정이 하나도 없을 때 첫 로그인 요청에서 생성됩니다. 이후에도 admin 로그인 비밀번호는 DB 해시가 아니라 서버의 `INITIAL_ADMIN_PASSWORD`를 항상 기준으로 사용합니다. 값을 변경한 경우 백엔드 서버를 재시작하면 새 비밀번호가 바로 적용됩니다. `INITIAL_ADMIN_PASSWORD`가 비어 있으면 admin으로 로그인할 수 없습니다.
 
-로컬 HTTP 개발에서는 `AUTH_COOKIE_SECURE=false`를 사용합니다. HTTPS로 외부에 배포할 때는 반드시 `AUTH_COOKIE_SECURE=true`로 바꾸십시오. 로그인 세션은 원문 토큰이 아니라 SHA-256 해시로 DB에 저장되고, 브라우저에는 JavaScript로 읽을 수 없는 `HttpOnly` 쿠키로 전달됩니다.
+로컬 HTTP 개발에서는 `AUTH_COOKIE_SECURE=false`를 사용합니다. HTTPS로 외부에 배포할 때는 반드시 `AUTH_COOKIE_SECURE=true`로 바꾸십시오. 로그인 세션은 원문 토큰이 아니라 SHA-256 해시로 DB에 저장되고, 브라우저에는 JavaScript로 읽을 수 없는 `HttpOnly` 쿠키로 전달됩니다. 세션 유효시간은 기본 30분이며, 백엔드 프로세스가 시작될 때 기존 활성 세션을 모두 폐기하므로 서버 재시작 후에는 모든 사용자가 로그인 화면부터 다시 시작합니다. 이 동작은 `python -m app.run`과 `uvicorn app.main:app` 실행 모두에 적용됩니다.
 
 admin은 항상 활성화되는 시스템 계정이므로 `관리 → 계정 관리` 목록에 표시되지 않으며 비활성화할 수도 없습니다. 이 화면에서는 일반 학습자 계정만 등록·활성화·비활성화할 수 있고, 일반 계정 비밀번호는 DB의 PBKDF2 해시로 관리합니다.
 
