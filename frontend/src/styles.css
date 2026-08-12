@@ -16,3 +16,45 @@
 
 .mock-exam-setup{width:100%;min-width:0}.mock-exam-setup>*{min-width:0}.mock-exam-setup label,.mock-exam-setup select,.mock-exam-setup .button{width:100%;min-width:0;max-width:100%}.mock-exam-setup select{text-overflow:ellipsis}.mock-exam-setup .notice{min-width:0;align-items:flex-start;line-height:1.55}.mock-exam-setup .notice svg{flex:none}
 @media(max-width:760px){.shell{padding-bottom:calc(67px + env(safe-area-inset-bottom))}main{padding-bottom:calc(80px + env(safe-area-inset-bottom))}aside{height:calc(67px + env(safe-area-inset-bottom));padding-bottom:calc(7px + env(safe-area-inset-bottom))}.panel.mock-exam-setup{padding:20px 16px;gap:18px}.question{margin:18px auto;padding:18px 16px}.question h2{font-size:clamp(17px,4.5vw,19px);line-height:1.65;letter-spacing:-.2px}.question-en{font-size:13px;line-height:1.55}.choice{padding:14px 13px;gap:11px;font-size:15px;line-height:1.55}.choice small{font-size:12px;line-height:1.45}}
+
+/* 관리자 화면은 모바일에서 넓은 표를 정보 카드로 전환한다. */
+.admin-page,.admin-page .panel,.admin-domain-counts .metrics article{min-width:0}
+@media(max-width:760px){
+  .admin-page .page-head{margin-bottom:22px}
+  .admin-page .panel{padding:20px 16px}
+  .admin-page .section-title{align-items:flex-start;gap:12px;margin-bottom:16px}
+  .admin-page .section-title h2{min-width:0;margin:0;font-size:clamp(17px,5vw,20px);line-height:1.35;overflow-wrap:anywhere}
+  .admin-overview{gap:10px}
+  .admin-overview article{padding:16px}
+  .admin-overview strong{font-size:23px}
+  .admin-readiness .table-wrap{overflow:visible}
+  .admin-readiness table{table-layout:fixed;font-size:12px}
+  .admin-readiness th,.admin-readiness td{padding:10px 6px;text-align:center;word-break:keep-all}
+  .admin-readiness th:first-child,.admin-readiness td:first-child{width:52%;text-align:left}
+  .admin-readiness th:not(:first-child){font-size:11px;white-space:nowrap}
+  .admin-domain-counts .metrics{grid-template-columns:1fr;gap:8px}
+  .admin-domain-counts .metrics article{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px}
+  .admin-domain-counts .metrics small{font-size:13px;line-height:1.4;word-break:keep-all}
+  .admin-domain-counts .metrics strong{font-size:22px}
+  .admin-unclassified>.section-title{flex-direction:column}
+  .admin-unclassified .section-title .actions{width:100%;margin-top:0;display:grid;grid-template-columns:auto minmax(0,1fr)}
+  .admin-unclassified .section-title .actions .button{width:100%;white-space:normal}
+  .admin-responsive-table{overflow:visible}
+  .admin-responsive-table table,.admin-responsive-table tbody,.admin-responsive-table tr,.admin-responsive-table td{display:block;width:100%}
+  .admin-responsive-table thead{display:none}
+  .admin-responsive-table tbody{display:grid;gap:12px}
+  .admin-responsive-table tr{padding:10px 14px;border:1px solid var(--line);border-radius:12px}
+  .admin-responsive-table td{display:grid;grid-template-columns:minmax(86px,34%) minmax(0,1fr);gap:10px;align-items:start;padding:9px 0;border:0;overflow-wrap:anywhere}
+  .admin-responsive-table td+td{border-top:1px solid var(--line)}
+  .admin-responsive-table td::before{content:attr(data-label);color:var(--muted);font-size:11px;font-weight:700}
+  .admin-responsive-table td .badge{justify-self:start}
+  .admin-responsive-table td button{width:100%;font-size:14px}
+  .admin-responsive-table .actions{margin:0;display:grid;grid-template-columns:1fr;gap:8px}
+  .admin-responsive-table select{width:100%;min-width:0;padding:10px}
+  .report-description{min-width:0}
+}
+@media(max-width:380px){
+  .admin-page .panel{padding:18px 13px}
+  .admin-readiness th,.admin-readiness td{padding-inline:4px}
+  .admin-responsive-table td{grid-template-columns:76px minmax(0,1fr)}
+}
