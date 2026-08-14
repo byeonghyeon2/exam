@@ -1,5 +1,45 @@
 type WebAuthnJson = Record<string, unknown>;
 
+export function passkeyErrorMessage(error: unknown, registration: boolean): string {
+  const fallback = registration
+    ? 'Passkey 등록에 실패했습니다. 다시 시도하거나 관리자에게 문의해주세요.'
+    : 'Passkey 인증에 실패했습니다. 다시 시도하거나 관리자에게 문의해주세요.';
+  if (error instanceof DOMException) {
+    if (error.name === 'NotAllowedError') {
+      return `Passkey ${registration ? '등록' : '인증'}이 취소되었거나 시간이 초과되었습니다. 다시 시도해주세요.`;
+    }
+    if (error.name === 'SecurityError') {
+      return `현재 접속 주소에서는 Passkey ${registration ? '등록' : '인증'}을 사용할 수 없습니다. 관리자에게 문의해주세요.`;
+    }
+    if (error.name === 'NotSupportedError') {
+      return '이 브라우저 또는 기기는 Passkey를 지원하지 않습니다. 관리자에게 문의해주세요.';
+    }
+    if (error.name === 'InvalidStateError') {
+      return '이미 등록된 인증키입니다. 관리자에게 기기 초기화를 요청해주세요.';
+    }
+    if (error.name === 'AbortError') {
+      return `Passkey ${registration ? '등록' : '인증'}이 중단되었습니다. 다시 시도해주세요.`;
+    }
+  }
+  const message = error instanceof Error ? error.message : '';
+  if (message.includes('일치하지 않습니다')) {
+    return '인증키가 일치하지 않습니다. 관리자에게 문의해주세요.';
+  }
+  if (message.includes('등록된 Passkey가 없습니다')) {
+    return '등록된 인증키를 찾을 수 없습니다. 관리자에게 기기 초기화를 요청해주세요.';
+  }
+  if (message.includes('만료')) {
+    return `Passkey ${registration ? '등록' : '인증'} 요청이 만료되었습니다. 다시 시도해주세요.`;
+  }
+  if (message.includes('지원하지 않습니다') || message.includes('HTTPS')) {
+    return '이 브라우저 또는 접속 환경에서는 Passkey를 사용할 수 없습니다. 관리자에게 문의해주세요.';
+  }
+  if (message.includes('인증에 실패') || message.includes('검증하지 못했습니다')) {
+    return fallback;
+  }
+  return fallback;
+}
+
 function decodeBase64Url(value: string): ArrayBuffer {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
   const binary = window.atob(padded);

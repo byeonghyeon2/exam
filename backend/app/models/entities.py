@@ -17,11 +17,11 @@ from sqlalchemy import (
 from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, TimestampMixin, utcnow
+from app.db.base import Base, TimestampMixin, table_name, utcnow
 
 
 class Certification(Base, TimestampMixin):
-    __tablename__ = "certifications"
+    __tablename__ = table_name("certifications")
     id: Mapped[int] = mapped_column(primary_key=True)
     certification_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name_en: Mapped[str] = mapped_column(String(255))
@@ -38,10 +38,10 @@ class Certification(Base, TimestampMixin):
 
 
 class Domain(Base, TimestampMixin):
-    __tablename__ = "domains"
+    __tablename__ = table_name("domains")
     __table_args__ = (UniqueConstraint("certification_id", "domain_code"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    certification_id: Mapped[int] = mapped_column(ForeignKey("certifications.id"), index=True)
+    certification_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('certifications')}.id"), index=True)
     domain_code: Mapped[str] = mapped_column(String(64))
     name_en: Mapped[str] = mapped_column(String(255))
     name_ko: Mapped[str] = mapped_column(String(255), default="")
@@ -52,12 +52,12 @@ class Domain(Base, TimestampMixin):
 
 
 class Question(Base, TimestampMixin):
-    __tablename__ = "questions"
+    __tablename__ = table_name("questions")
     __table_args__ = (Index("ix_question_pool", "certification_id", "domain_id", "is_active", "verification_status"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     question_uid: Mapped[str] = mapped_column(String(128), unique=True)
-    certification_id: Mapped[int] = mapped_column(ForeignKey("certifications.id"), index=True)
-    domain_id: Mapped[int] = mapped_column(ForeignKey("domains.id"), index=True)
+    certification_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('certifications')}.id"), index=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('domains')}.id"), index=True)
     question_type: Mapped[str] = mapped_column(String(32))
     question_en: Mapped[str] = mapped_column(Text)
     question_ko: Mapped[str] = mapped_column(Text, default="")
@@ -81,10 +81,10 @@ class Question(Base, TimestampMixin):
 
 
 class QuestionChoice(Base, TimestampMixin):
-    __tablename__ = "question_choices"
+    __tablename__ = table_name("question_choices")
     __table_args__ = (UniqueConstraint("question_id", "choice_key"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('questions')}.id"), index=True)
     choice_key: Mapped[str] = mapped_column(String(8))
     text_en: Mapped[str] = mapped_column(Text)
     text_ko: Mapped[str] = mapped_column(Text, default="")
@@ -92,9 +92,9 @@ class QuestionChoice(Base, TimestampMixin):
 
 
 class QuestionAnswerVersion(Base):
-    __tablename__ = "question_answer_versions"
+    __tablename__ = table_name("question_answer_versions")
     id: Mapped[int] = mapped_column(primary_key=True)
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('questions')}.id"), index=True)
     answer_source: Mapped[str] = mapped_column(String(32))
     answers_json: Mapped[list[str]] = mapped_column(JSON)
     reason: Mapped[str | None] = mapped_column(Text)
@@ -105,10 +105,10 @@ class QuestionAnswerVersion(Base):
 
 
 class QuestionExplanation(Base, TimestampMixin):
-    __tablename__ = "question_explanations"
+    __tablename__ = table_name("question_explanations")
     __table_args__ = (UniqueConstraint("question_id", "language"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('questions')}.id"), index=True)
     language: Mapped[str] = mapped_column(String(8))
     correct_answer_summary: Mapped[str] = mapped_column(Text)
     core_reason: Mapped[str] = mapped_column(Text)
@@ -125,10 +125,10 @@ class QuestionExplanation(Base, TimestampMixin):
 
 
 class StudySessionRecord(Base):
-    __tablename__ = "study_sessions"
+    __tablename__ = table_name("study_sessions")
     session_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    certification_id: Mapped[int] = mapped_column(ForeignKey("certifications.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('users')}.id"), index=True)
+    certification_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('certifications')}.id"), index=True)
     question_ids_json: Mapped[list[int]] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(32), default="in_progress", index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -137,11 +137,11 @@ class StudySessionRecord(Base):
 
 
 class StudyAttempt(Base):
-    __tablename__ = "study_attempts"
+    __tablename__ = table_name("study_attempts")
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), index=True)
     session_id: Mapped[str] = mapped_column(String(36), index=True)
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('questions')}.id"), index=True)
     selected_answers_json: Mapped[list[str]] = mapped_column(JSON)
     is_correct: Mapped[bool] = mapped_column(Boolean)
     wrong_note_processed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
@@ -149,10 +149,10 @@ class StudyAttempt(Base):
 
 
 class MockExam(Base):
-    __tablename__ = "mock_exams"
+    __tablename__ = table_name("mock_exams")
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
-    certification_id: Mapped[int] = mapped_column(ForeignKey("certifications.id"), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), index=True)
+    certification_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('certifications')}.id"), index=True)
     status: Mapped[str] = mapped_column(String(32), default="in_progress", index=True)
     question_count: Mapped[int] = mapped_column(Integer)
     duration_minutes: Mapped[int] = mapped_column(Integer)
@@ -168,14 +168,14 @@ class MockExam(Base):
 
 
 class MockExamQuestion(Base):
-    __tablename__ = "mock_exam_questions"
+    __tablename__ = table_name("mock_exam_questions")
     __table_args__ = (
         UniqueConstraint("mock_exam_id", "question_id", name="uq_mock_exam_question_question"),
         UniqueConstraint("mock_exam_id", "question_order", name="uq_mock_exam_question_order"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
-    mock_exam_id: Mapped[int] = mapped_column(ForeignKey("mock_exams.id"), index=True)
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
+    mock_exam_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('mock_exams')}.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('questions')}.id"), index=True)
     question_order: Mapped[int] = mapped_column(Integer)
     selected_answers_json: Mapped[list[str] | None] = mapped_column(JSON)
     is_correct: Mapped[bool | None] = mapped_column(Boolean)
@@ -184,11 +184,11 @@ class MockExamQuestion(Base):
 
 
 class WrongNote(Base, TimestampMixin):
-    __tablename__ = "wrong_notes"
+    __tablename__ = table_name("wrong_notes")
     __table_args__ = (UniqueConstraint("user_id", "question_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('questions')}.id"), index=True)
     wrong_count: Mapped[int] = mapped_column(Integer, default=0)
     correct_after_wrong_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
@@ -198,9 +198,9 @@ class WrongNote(Base, TimestampMixin):
 
 
 class QuestionReport(Base):
-    __tablename__ = "question_reports"
+    __tablename__ = table_name("question_reports")
     id: Mapped[int] = mapped_column(primary_key=True)
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('questions')}.id"), index=True)
     report_type: Mapped[str] = mapped_column(String(32), index=True)
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(32), default="received", index=True)
@@ -210,13 +210,13 @@ class QuestionReport(Base):
 
 
 class AppSetting(Base, TimestampMixin):
-    __tablename__ = "app_settings"
+    __tablename__ = table_name("app_settings")
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value_json: Mapped[Any] = mapped_column(JSON)
 
 
 class AIUsageLog(Base):
-    __tablename__ = "ai_usage_logs"
+    __tablename__ = table_name("ai_usage_logs")
     id: Mapped[int] = mapped_column(primary_key=True)
     operation: Mapped[str] = mapped_column(String(32), index=True)
     model_name: Mapped[str] = mapped_column(String(128))
@@ -229,7 +229,7 @@ class AIUsageLog(Base):
 
 
 class ImportJob(Base):
-    __tablename__ = "import_jobs"
+    __tablename__ = table_name("import_jobs")
     id: Mapped[int] = mapped_column(primary_key=True)
     mode: Mapped[str] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(32), index=True)
@@ -243,9 +243,9 @@ class ImportJob(Base):
 
 
 class ImportJobError(Base):
-    __tablename__ = "import_job_errors"
+    __tablename__ = table_name("import_job_errors")
     id: Mapped[int] = mapped_column(primary_key=True)
-    import_job_id: Mapped[int] = mapped_column(ForeignKey("import_jobs.id"), index=True)
+    import_job_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('import_jobs')}.id"), index=True)
     line_number: Mapped[int | None] = mapped_column(Integer)
     question_uid: Mapped[str | None] = mapped_column(String(128))
     error_code: Mapped[str] = mapped_column(String(64))
@@ -253,20 +253,20 @@ class ImportJobError(Base):
 
 
 class User(Base, TimestampMixin):
-    __tablename__ = "users"
+    __tablename__ = table_name("users")
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(16), default="user", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey(f"{table_name('users')}.id"), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuthSession(Base):
-    __tablename__ = "auth_sessions"
+    __tablename__ = table_name("auth_sessions")
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('users')}.id", ondelete="CASCADE"), index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     purpose: Mapped[str] = mapped_column(String(32), default="full", index=True)
     challenge: Mapped[str | None] = mapped_column(String(255))
@@ -278,10 +278,10 @@ class AuthSession(Base):
 
 
 class PasskeyCredential(Base):
-    __tablename__ = "passkey_credentials"
+    __tablename__ = table_name("passkey_credentials")
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+        ForeignKey(f"{table_name('users')}.id", ondelete="CASCADE"), unique=True, index=True
     )
     credential_id: Mapped[bytes] = mapped_column(
         LargeBinary(1024).with_variant(mysql.VARBINARY(1024), "mysql"),

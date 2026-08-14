@@ -14,6 +14,8 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if any(name.startswith("exam_") for name in inspector.get_table_names()):
+        return
     auth_columns = {column["name"] for column in inspector.get_columns("auth_sessions")}
     if "purpose" not in auth_columns:
         op.add_column("auth_sessions", sa.Column("purpose", sa.String(length=32), nullable=False, server_default="full"))

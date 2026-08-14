@@ -13,6 +13,8 @@ depends_on = None
 def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())
     tables = set(inspector.get_table_names())
+    if any(name.startswith("exam_") for name in tables):
+        return
     if "users" not in tables:
         op.create_table(
         "users",

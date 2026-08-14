@@ -82,6 +82,8 @@ Copy-Item .env.example .env
 
 백엔드는 프로젝트 루트의 `.env`를 읽어 DB에 연결합니다. 실제 비밀번호와 API 키가 들어 있는 `.env`는 `.gitignore`에 포함되어 있으므로 Git에 커밋하지 마십시오. 저장소에는 변수 이름만 제공하는 `.env.example`만 올립니다.
 
+애플리케이션이 소유하는 테이블은 모두 `exam_` 접두사를 사용합니다. 예: `exam_questions`, `exam_users`, `exam_auth_sessions`. Alembic 자체 상태 테이블인 `alembic_version`과 같은 DB에 존재하는 다른 시스템의 테이블은 이 규칙 및 마이그레이션 대상에서 제외합니다.
+
 ### SQLite로 로컬 실행
 
 별도 DB 서버 없이 개발하려면 다음 값만 사용합니다.

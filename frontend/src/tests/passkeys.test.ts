@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { startPasskeyAuthentication, startPasskeyRegistration } from '../auth/passkeys';
+import { passkeyErrorMessage, startPasskeyAuthentication, startPasskeyRegistration } from '../auth/passkeys';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -74,5 +74,44 @@ describe('browser passkey ceremonies', () => {
     } });
     await expect(startPasskeyRegistration({ challenge: 'AQ', user: { id: 'AQ' } })).rejects.toThrow('취소');
     await expect(startPasskeyAuthentication({ challenge: 'AQ' })).rejects.toThrow('취소');
+  });
+
+  it('maps browser and server failures to stable Korean guidance', () => {
+    expect(passkeyErrorMessage(new DOMException('', 'NotAllowedError'), false)).toBe(
+      'Passkey 인증이 취소되었거나 시간이 초과되었습니다. 다시 시도해주세요.',
+    );
+    expect(passkeyErrorMessage(new DOMException('', 'SecurityError'), false)).toBe(
+      '현재 접속 주소에서는 Passkey 인증을 사용할 수 없습니다. 관리자에게 문의해주세요.',
+    );
+    expect(passkeyErrorMessage(new DOMException('', 'NotSupportedError'), false)).toBe(
+      '이 브라우저 또는 기기는 Passkey를 지원하지 않습니다. 관리자에게 문의해주세요.',
+    );
+    expect(passkeyErrorMessage(new DOMException('', 'InvalidStateError'), true)).toBe(
+      '이미 등록된 인증키입니다. 관리자에게 기기 초기화를 요청해주세요.',
+    );
+    expect(passkeyErrorMessage(new DOMException('', 'AbortError'), true)).toBe(
+      'Passkey 등록이 중단되었습니다. 다시 시도해주세요.',
+    );
+    expect(passkeyErrorMessage(new Error('등록된 Passkey와 일치하지 않습니다'), false)).toBe(
+      '인증키가 일치하지 않습니다. 관리자에게 문의해주세요.',
+    );
+    expect(passkeyErrorMessage(new Error('등록된 Passkey가 없습니다'), false)).toBe(
+      '등록된 인증키를 찾을 수 없습니다. 관리자에게 기기 초기화를 요청해주세요.',
+    );
+    expect(passkeyErrorMessage(new Error('Passkey 요청이 만료되었습니다'), true)).toBe(
+      'Passkey 등록 요청이 만료되었습니다. 다시 시도해주세요.',
+    );
+    expect(passkeyErrorMessage(new Error('HTTPS를 지원하지 않습니다'), false)).toBe(
+      '이 브라우저 또는 접속 환경에서는 Passkey를 사용할 수 없습니다. 관리자에게 문의해주세요.',
+    );
+    expect(passkeyErrorMessage(new Error('unknown'), true)).toBe(
+      'Passkey 등록에 실패했습니다. 다시 시도하거나 관리자에게 문의해주세요.',
+    );
+    expect(passkeyErrorMessage('unknown', false)).toBe(
+      'Passkey 인증에 실패했습니다. 다시 시도하거나 관리자에게 문의해주세요.',
+    );
+    expect(passkeyErrorMessage(new Error('Passkey 인증에 실패했습니다'), false)).toBe(
+      'Passkey 인증에 실패했습니다. 다시 시도하거나 관리자에게 문의해주세요.',
+    );
   });
 });

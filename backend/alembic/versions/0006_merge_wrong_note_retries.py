@@ -12,6 +12,8 @@ depends_on = None
 
 def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())
+    if any(name.startswith("exam_") for name in inspector.get_table_names()):
+        return
     columns = {column["name"] for column in inspector.get_columns("study_sessions")}
     indexes = {index["name"] for index in inspector.get_indexes("study_sessions")}
     with op.batch_alter_table("study_sessions") as batch:

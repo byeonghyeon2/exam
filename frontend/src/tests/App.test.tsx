@@ -16,6 +16,9 @@ describe('App',()=>{
     vi.stubGlobal('fetch',vi.fn((input:string|URL)=>String(input).includes('/auth/me')?Promise.resolve(response(admin)):new Promise(()=>{})));
     renderApp();
     expect(await screen.findByRole('navigation',{name:'주 메뉴'})).toBeInTheDocument();
+    expect(screen.getAllByText('합격비서')).toHaveLength(2);
+    expect(screen.getAllByText('자격증 합격 비서')).toHaveLength(2);
+    expect(screen.getAllByRole('img',{name:'합격비서 아이콘'})[0]).toHaveAttribute('src','/icons/certexam-192.png');
     expect(screen.getAllByRole('button',{name:'다크 모드'})).toHaveLength(2);
     expect(screen.getAllByRole('button',{name:'로그아웃'})).toHaveLength(2);
     expect(screen.getByRole('heading',{name:/합격까지/})).toBeInTheDocument();
@@ -35,6 +38,9 @@ describe('App',()=>{
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({detail:'로그인이 필요합니다'},false,401)));
     renderApp('/admin');
     expect(await screen.findByRole('heading',{name:'로그인'})).toBeInTheDocument();
+    expect(screen.getByRole('heading',{name:'로그인'}).querySelector('svg')).not.toBeNull();
+    expect(screen.queryByText('CertExam')).not.toBeInTheDocument();
+    expect(screen.queryByText('시험 준비의 흐름')).not.toBeInTheDocument();
     expect(screen.getByLabelText('비밀번호')).toHaveAttribute('type','password');
   });
 

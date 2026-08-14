@@ -50,7 +50,30 @@ describe('PasskeyGate', () => {
     });
     renderGate(authenticating);
 
+    expect(screen.getByRole('heading', { name: 'Passkey 인증' }).querySelector('svg')).not.toBeNull();
+    expect(screen.queryByText('CertExam')).not.toBeInTheDocument();
+    expect(screen.queryByText('시험 준비의 흐름')).not.toBeInTheDocument();
+
     await userEvent.click(screen.getByRole('button', { name: 'Passkey로 인증' }));
     expect(endpoints.verifyPasskeyAuthentication).toHaveBeenCalledWith({ id: 'credential' });
+  });
+
+  it('shows browser authentication failures as an actionable Korean message', async () => {
+    const authenticating = {
+      ...pending, passkey_registered: true, passkey_registration_required: false,
+      passkey_authentication_required: true,
+    };
+    vi.spyOn(endpoints, 'passkeyAuthenticationOptions').mockResolvedValue({ challenge: 'challenge' });
+    vi.spyOn(passkeys, 'startPasskeyAuthentication').mockRejectedValue(
+      new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError'),
+    );
+    renderGate(authenticating);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Passkey로 인증' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Passkey 인증이 취소되었거나 시간이 초과되었습니다. 다시 시도해주세요.',
+    );
+    expect(screen.queryByText(/The operation either timed out/)).not.toBeInTheDocument();
   });
 });

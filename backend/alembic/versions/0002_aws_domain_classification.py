@@ -1,7 +1,8 @@
 """Add AWS domain-classification and detailed import counters."""
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0002_aws_domain_classification"
 down_revision = "0001_initial"
@@ -11,6 +12,8 @@ depends_on = None
 
 def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())
+    if any(name.startswith("exam_") for name in inspector.get_table_names()):
+        return
     question_columns = {column["name"] for column in inspector.get_columns("questions")}
     additions = [
         sa.Column("classification_confidence", sa.Float(), nullable=True),

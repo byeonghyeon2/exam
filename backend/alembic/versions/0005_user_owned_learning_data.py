@@ -18,8 +18,10 @@ def _admin_id(connection: sa.Connection) -> int | None:
 
 def upgrade() -> None:
     connection = op.get_bind()
-    admin_id = _admin_id(connection)
     inspector = sa.inspect(connection)
+    if any(name.startswith("exam_") for name in inspector.get_table_names()):
+        return
+    admin_id = _admin_id(connection)
     if "study_sessions" not in inspector.get_table_names():
         op.create_table(
             "study_sessions",
