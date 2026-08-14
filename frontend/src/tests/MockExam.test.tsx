@@ -104,6 +104,11 @@ describe('mobile exam regression styles', () => {
     expect(compact).toContain('.panel.mock-exam-setup{padding:20px16px;gap:18px}');
   });
 
+  it('keeps the certification select arrow away from the right border', () => {
+    expect(compact).toContain('.mock-exam-setupselect{appearance:none;padding-right:44px;');
+    expect(compact).toContain('background-position:right14pxcenter;background-size:14px');
+  });
+
   it('uses compact readable question typography and bottom safe areas on mobile', () => {
     expect(compact).toContain('.questionh2{font-size:clamp(17px,4.5vw,19px);line-height:1.65');
     expect(compact).toContain('.question-en{font-size:13px;line-height:1.55}');
