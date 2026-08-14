@@ -22,6 +22,7 @@ python_version = "3.12"
 plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
 ignore_errors = true
+sqlite_cache = false
 
 [tool.setuptools.packages.find]
 include = ["app*"]
