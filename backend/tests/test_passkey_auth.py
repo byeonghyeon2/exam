@@ -5,8 +5,10 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.schema import CreateTable
 
 from app.api.v1.auth import (
     current_user,
@@ -20,6 +22,12 @@ from app.db.base import Base, utcnow
 from app.db.session import get_db
 from app.main import app
 from app.models.entities import AuthSession, PasskeyCredential, User
+
+
+def test_passkey_credential_id_is_mysql_indexable() -> None:
+    ddl = str(CreateTable(PasskeyCredential.__table__).compile(dialect=mysql.dialect()))
+
+    assert "credential_id VARBINARY(1024)" in ddl
 from app.services.auth import hash_password
 
 

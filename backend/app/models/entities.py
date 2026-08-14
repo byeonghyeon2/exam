@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, utcnow
@@ -282,7 +283,11 @@ class PasskeyCredential(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
     )
-    credential_id: Mapped[bytes] = mapped_column(LargeBinary(1024), unique=True, index=True)
+    credential_id: Mapped[bytes] = mapped_column(
+        LargeBinary(1024).with_variant(mysql.VARBINARY(1024), "mysql"),
+        unique=True,
+        index=True,
+    )
     public_key: Mapped[bytes] = mapped_column(LargeBinary)
     sign_count: Mapped[int] = mapped_column(Integer, default=0)
     transports_json: Mapped[list[str]] = mapped_column(JSON, default=list)

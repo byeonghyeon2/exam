@@ -1,6 +1,7 @@
 """Add one-device passkey credentials and staged authentication sessions."""
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import mysql
 
 from alembic import op
 
@@ -11,7 +12,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    inspector = sa.inspect(op.get_bind())
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
     auth_columns = {column["name"] for column in inspector.get_columns("auth_sessions")}
     if "purpose" not in auth_columns:
         op.add_column("auth_sessions", sa.Column("purpose", sa.String(length=32), nullable=False, server_default="full"))
@@ -26,22 +28,48 @@ def upgrade() -> None:
         op.create_index(op.f("ix_auth_sessions_purpose"), "auth_sessions", ["purpose"], unique=False)
     if "passkey_credentials" not in inspector.get_table_names():
         op.create_table(
-        "passkey_credentials",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("credential_id", sa.LargeBinary(length=1024), nullable=False),
-        sa.Column("public_key", sa.LargeBinary(), nullable=False),
-        sa.Column("sign_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("transports_json", sa.JSON(), nullable=False),
-        sa.Column("device_type", sa.String(length=32), nullable=False, server_default="unknown"),
-        sa.Column("backed_up", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id"),
+            "passkey_credentials",
+            sa.Column("id", sa.Integer(), nullable=False),
+            sa.Column("user_id", sa.Integer(), nullable=False),
+            sa.Column(
+                "credential_id",
+                sa.LargeBinary(length=1024).with_variant(mysql.VARBINARY(1024), "mysql"),
+                nullable=False,
+            ),
+            sa.Column("public_key", sa.LargeBinary(), nullable=False),
+            sa.Column("sign_count", sa.Integer(), nullable=False, server_default="0"),
+            sa.Column("transports_json", sa.JSON(), nullable=False),
+            sa.Column("device_type", sa.String(length=32), nullable=False, server_default="unknown"),
+            sa.Column("backed_up", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+            sa.PrimaryKeyConstraint("id"),
+            sa.UniqueConstraint("user_id"),
         )
+
+    inspector = sa.inspect(bind)
+    credential_columns = {
+        column["name"]: column for column in inspector.get_columns("passkey_credentials")
+    }
+    credential_id_column = credential_columns["credential_id"]
+    if bind.dialect.name == "mysql" and not isinstance(
+        credential_id_column["type"], mysql.VARBINARY
+    ):
+        op.alter_column(
+            "passkey_credentials",
+            "credential_id",
+            existing_type=credential_id_column["type"],
+            type_=mysql.VARBINARY(1024),
+            existing_nullable=False,
+        )
+
+    credential_indexes = {
+        index["name"] for index in sa.inspect(bind).get_indexes("passkey_credentials")
+    }
+    if op.f("ix_passkey_credentials_user_id") not in credential_indexes:
         op.create_index(op.f("ix_passkey_credentials_user_id"), "passkey_credentials", ["user_id"], unique=True)
+    if op.f("ix_passkey_credentials_credential_id") not in credential_indexes:
         op.create_index(op.f("ix_passkey_credentials_credential_id"), "passkey_credentials", ["credential_id"], unique=True)
 
 
