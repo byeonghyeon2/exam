@@ -4,3 +4,5 @@ MySQL uses `utf8mb4` and UTC. Schema changes are made only through Alembic. Fore
 
 All application-owned table names start with `exam_`. Alembic's internal `alembic_version` table and unrelated legacy/shared tables in the same database are intentionally excluded. Migration `0008_prefix_application_tables` renames the 19 application tables without copying or deleting their rows and is safe to rerun after a partial rename.
 
+`exam_passkey_challenges` stores only a SHA-256 hash of the anonymous ceremony token, the WebAuthn challenge, expiry, and consumption timestamp. Records are single use and expired/consumed rows are cleaned when a new ceremony starts. Deleting a managed user explicitly removes user-owned study sessions, attempts, mock exams and assigned rows, wrong notes, login sessions, and Passkey credentials; certifications, questions, answer versions, reports, and shared AI explanations are retained.
+

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../api/queries';
@@ -38,42 +38,36 @@ describe('PasskeyGate', () => {
     expect(client.getQueryData(['me'])).toEqual(verified);
   });
 
-  it('requires the registered passkey after password verification', async () => {
-    const authenticating = {
-      ...pending, passkey_registered: true, passkey_registration_required: false,
-      passkey_authentication_required: true,
-    };
-    vi.spyOn(endpoints, 'passkeyAuthenticationOptions').mockResolvedValue({ challenge: 'challenge' });
-    vi.spyOn(passkeys, 'startPasskeyAuthentication').mockResolvedValue({ id: 'credential' });
-    vi.spyOn(endpoints, 'verifyPasskeyAuthentication').mockResolvedValue({
-      ...authenticating, passkey_authentication_required: false,
-    });
-    renderGate(authenticating);
-
-    expect(screen.getByRole('heading', { name: 'Passkey 인증' }).querySelector('svg')).not.toBeNull();
-    expect(screen.queryByText('CertExam')).not.toBeInTheDocument();
-    expect(screen.queryByText('시험 준비의 흐름')).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Passkey로 인증' }));
-    expect(endpoints.verifyPasskeyAuthentication).toHaveBeenCalledWith({ id: 'credential' });
-  });
-
-  it('shows browser authentication failures as an actionable Korean message', async () => {
-    const authenticating = {
-      ...pending, passkey_registered: true, passkey_registration_required: false,
-      passkey_authentication_required: true,
-    };
-    vi.spyOn(endpoints, 'passkeyAuthenticationOptions').mockResolvedValue({ challenge: 'challenge' });
-    vi.spyOn(passkeys, 'startPasskeyAuthentication').mockRejectedValue(
+  it('shows browser registration failures as an actionable Korean message', async () => {
+    vi.spyOn(endpoints, 'passkeyRegistrationOptions').mockResolvedValue({ challenge: 'challenge' });
+    vi.spyOn(passkeys, 'startPasskeyRegistration').mockRejectedValue(
       new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError'),
     );
-    renderGate(authenticating);
+    renderGate(pending);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Passkey로 인증' }));
+    await userEvent.click(screen.getByRole('button', { name: '이 기기에 Passkey 등록' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Passkey 인증이 취소되었거나 시간이 초과되었습니다. 다시 시도해주세요.',
+      'Passkey 등록이 취소되었거나 시간이 초과되었습니다. 다시 시도해주세요.',
     );
     expect(screen.queryByText(/The operation either timed out/)).not.toBeInTheDocument();
+  });
+
+  it('shows pending controls and clears local state when logging out', async () => {
+    let resolveOptions!: (value: Record<string, unknown>) => void;
+    vi.spyOn(endpoints, 'passkeyRegistrationOptions').mockImplementation(
+      () => new Promise(resolve => { resolveOptions = resolve; }),
+    );
+    vi.spyOn(endpoints, 'logout').mockResolvedValue();
+    const client = renderGate(pending);
+    client.setQueryData(['me'], pending);
+
+    await userEvent.click(screen.getByRole('button', { name: '이 기기에 Passkey 등록' }));
+    expect(screen.getByRole('button', { name: '등록 확인 중…' })).toBeDisabled();
+    resolveOptions({ challenge: 'AA' });
+
+    await userEvent.click(screen.getByRole('button', { name: '로그아웃' }));
+    await waitFor(() => expect(endpoints.logout).toHaveBeenCalled());
+    await waitFor(() => expect(client.getQueryData(['me'])).toBeUndefined());
   });
 });

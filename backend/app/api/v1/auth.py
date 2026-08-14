@@ -1,4 +1,6 @@
+import hashlib
 import hmac
+import secrets
 from datetime import UTC, timedelta
 from typing import Annotated, Any
 
@@ -10,7 +12,17 @@ from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 from app.core.config import Settings, get_settings
 from app.db.base import utcnow
 from app.db.session import get_db
-from app.models.entities import AuthSession, PasskeyCredential, User
+from app.models.entities import (
+    AuthSession,
+    MockExam,
+    MockExamQuestion,
+    PasskeyChallenge,
+    PasskeyCredential,
+    StudyAttempt,
+    StudySessionRecord,
+    User,
+    WrongNote,
+)
 from app.schemas.api import LoginRequest, PasskeyCredentialRequest, UserCreate, UserOut, UserUpdate
 from app.services import passkeys
 from app.services.auth import (
@@ -22,6 +34,7 @@ from app.services.auth import (
 )
 
 SESSION_COOKIE = "certexam_session"
+PASSKEY_CHALLENGE_COOKIE = "certexam_passkey_challenge"
 Db = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 
@@ -89,6 +102,30 @@ def set_session_cookie(response: Response, raw_token: str, settings: Settings) -
     )
 
 
+def set_passkey_challenge_cookie(
+    response: Response, raw_token: str, settings: Settings
+) -> None:
+    response.set_cookie(
+        PASSKEY_CHALLENGE_COOKIE,
+        raw_token,
+        max_age=settings.passkey_challenge_minutes * 60,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="strict",
+        path="/api/v1/auth/passkeys/authentication",
+    )
+
+
+def delete_passkey_challenge_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        PASSKEY_CHALLENGE_COOKIE,
+        path="/api/v1/auth/passkeys/authentication",
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+
+
 def require_ceremony(
     identity: tuple[AuthSession, User] | None, purpose: str
 ) -> tuple[AuthSession, User]:
@@ -125,6 +162,51 @@ def expected_challenge(session: AuthSession, challenge_type: str) -> bytes:
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, "Passkey 요청이 만료되었습니다. 다시 시도하세요")
     return base64url_to_bytes(session.challenge)
+
+
+def create_authentication_challenge(
+    db: Session, settings: Settings
+) -> tuple[bytes, str]:
+    now = utcnow()
+    db.execute(
+        delete(PasskeyChallenge).where(
+            (PasskeyChallenge.expires_at <= now)
+            | (PasskeyChallenge.consumed_at.is_not(None))
+        )
+    )
+    challenge = passkeys.new_challenge()
+    raw_token = secrets.token_urlsafe(32)
+    db.add(
+        PasskeyChallenge(
+            token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+            challenge=bytes_to_base64url(challenge),
+            expires_at=now + timedelta(minutes=settings.passkey_challenge_minutes),
+        )
+    )
+    db.commit()
+    return challenge, raw_token
+
+
+def consume_authentication_challenge(db: Session, raw_token: str | None) -> bytes:
+    if not raw_token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Passkey 인증 요청이 필요합니다")
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    ceremony = db.scalar(
+        select(PasskeyChallenge)
+        .where(PasskeyChallenge.token_hash == token_hash)
+        .with_for_update()
+    )
+    if ceremony is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Passkey 인증 요청이 유효하지 않습니다")
+    expires_at = ceremony.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if ceremony.consumed_at is not None or expires_at <= utcnow():
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Passkey 인증 요청이 만료되었습니다")
+    ceremony.consumed_at = utcnow()
+    challenge = base64url_to_bytes(ceremony.challenge)
+    db.commit()
+    return challenge
 
 
 def complete_session(db: Session, session: AuthSession, user: User) -> None:
@@ -178,8 +260,19 @@ def login(payload: LoginRequest, response: Response, db: Db, settings: AppSettin
         registered = db.scalar(
             select(PasskeyCredential.id).where(PasskeyCredential.user_id == user.id)
         ) is not None
-        purpose = "passkey_authentication" if registered else "passkey_registration"
-    session, raw_token = create_session(db, user, settings, purpose=purpose)
+        if registered:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "등록된 계정입니다. Passkey로 로그인해주세요",
+            )
+        purpose = "passkey_registration"
+    session, raw_token = create_session(
+        db,
+        user,
+        settings,
+        purpose=purpose,
+        revoke_existing=purpose == "full",
+    )
     if purpose == "full":
         user.last_login_at = utcnow()
     db.commit()
@@ -276,32 +369,35 @@ def passkey_registration_verify(
 
 @public.post("/auth/passkeys/authentication/options")
 def passkey_authentication_options(
-    identity: Annotated[tuple[AuthSession, User] | None, Depends(session_identity)],
+    response: Response,
     db: Db,
     settings: AppSettings,
 ) -> dict[str, Any]:
-    session, user = require_ceremony(identity, "passkey_authentication")
-    credential = db.scalar(select(PasskeyCredential).where(PasskeyCredential.user_id == user.id))
-    if credential is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "등록된 Passkey가 없습니다")
-    challenge = passkeys.new_challenge()
+    challenge, raw_token = create_authentication_challenge(db, settings)
     options = passkeys.authentication_options(settings, challenge)
-    save_challenge(db, session, challenge, "authentication", settings)
+    set_passkey_challenge_cookie(response, raw_token, settings)
     return options
 
 
 @public.post("/auth/passkeys/authentication/verify", response_model=UserOut)
 def passkey_authentication_verify(
     payload: PasskeyCredentialRequest,
-    identity: Annotated[tuple[AuthSession, User] | None, Depends(session_identity)],
+    response: Response,
     db: Db,
     settings: AppSettings,
+    challenge_token: str | None = Cookie(default=None, alias=PASSKEY_CHALLENGE_COOKIE),
 ) -> UserOut:
-    session, user = require_ceremony(identity, "passkey_authentication")
-    challenge = expected_challenge(session, "authentication")
-    credential = db.scalar(select(PasskeyCredential).where(PasskeyCredential.user_id == user.id))
-    if credential is None or payload.credential.get("id") != bytes_to_base64url(credential.credential_id):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "등록된 Passkey와 일치하지 않습니다")
+    challenge = consume_authentication_challenge(db, challenge_token)
+    try:
+        credential_id = base64url_to_bytes(str(payload.credential.get("id", "")))
+    except Exception as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Passkey 인증에 실패했습니다") from exc
+    credential = db.scalar(
+        select(PasskeyCredential).where(PasskeyCredential.credential_id == credential_id)
+    )
+    user = db.get(User, credential.user_id) if credential else None
+    if credential is None or user is None or not user.is_active or user.role == "admin":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Passkey 인증에 실패했습니다")
     try:
         verified = passkeys.verify_authentication(
             settings=settings,
@@ -314,8 +410,11 @@ def passkey_authentication_verify(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Passkey 인증에 실패했습니다") from exc
     credential.sign_count = verified.new_sign_count
     credential.last_used_at = utcnow()
-    complete_session(db, session, user)
+    session, raw_token = create_session(db, user, settings, purpose="full")
+    user.last_login_at = utcnow()
     db.commit()
+    set_session_cookie(response, raw_token, settings)
+    delete_passkey_challenge_cookie(response, settings)
     return user_response(db, user, session, settings)
 
 
@@ -399,5 +498,26 @@ def reset_passkey(user_id: int, db: Db) -> Response:
         .where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
         .values(revoked_at=utcnow())
     )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@admin_users.delete("/{user_id}", status_code=204)
+def delete_user(user_id: int, db: Db) -> Response:
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "계정을 찾을 수 없습니다")
+    if user.role == "admin":
+        raise HTTPException(409, "시스템 admin 계정은 삭제할 수 없습니다")
+
+    exam_ids = select(MockExam.id).where(MockExam.user_id == user.id)
+    db.execute(delete(MockExamQuestion).where(MockExamQuestion.mock_exam_id.in_(exam_ids)))
+    db.execute(delete(MockExam).where(MockExam.user_id == user.id))
+    db.execute(delete(StudyAttempt).where(StudyAttempt.user_id == user.id))
+    db.execute(delete(StudySessionRecord).where(StudySessionRecord.user_id == user.id))
+    db.execute(delete(WrongNote).where(WrongNote.user_id == user.id))
+    db.execute(delete(PasskeyCredential).where(PasskeyCredential.user_id == user.id))
+    db.execute(delete(AuthSession).where(AuthSession.user_id == user.id))
+    db.delete(user)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

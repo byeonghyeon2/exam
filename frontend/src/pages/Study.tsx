@@ -32,8 +32,8 @@ export function Study() {
   const { mutate: createSession, isPending, data } = create;
 
   useEffect(() => {
-    if (!id && !isPending && !data) createSession();
-  }, [id, isPending, data, createSession]);
+    if (!id && !isPending && !data && !create.isError) createSession();
+  }, [id, isPending, data, create.isError, createSession]);
 
   const session = useQuery({
     queryKey: ['study', id],

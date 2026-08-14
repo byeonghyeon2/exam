@@ -181,7 +181,9 @@ AUTH_RATE_LIMIT_WINDOW_SECONDS=60
 
 admin은 항상 활성화되는 시스템 계정이므로 `관리 → 계정 관리` 목록에 표시되지 않으며 비활성화할 수도 없습니다. 이 화면에서는 일반 학습자 계정만 등록·활성화·비활성화할 수 있고, 일반 계정 비밀번호는 DB의 PBKDF2 해시로 관리합니다.
 
-일반 계정은 임시 비밀번호로 처음 로그인한 뒤 현재 기기의 지문, Face ID, Windows Hello 또는 화면 잠금으로 Passkey를 등록해야 합니다. 등록 완료 전에는 Passkey API와 로그아웃 외의 보호 API가 모두 거절됩니다. 이후 로그인은 비밀번호 확인과 Passkey 인증을 모두 통과해야 하며, 같은 계정으로 새 로그인을 시작하면 기존 활성 세션은 폐기됩니다. 기기를 분실하거나 교체할 때는 admin이 계정 목록의 `기기 초기화`를 실행한 뒤 새 기기에서 다시 등록합니다.
+일반 계정은 관리자가 발급한 임시 비밀번호로 최초 한 번 로그인한 뒤 현재 기기의 지문, Face ID, Windows Hello 또는 화면 잠금으로 Passkey를 등록해야 합니다. 등록 완료 전에는 Passkey API와 로그아웃 외의 보호 API가 모두 거절됩니다. 이후에는 아이디·비밀번호 입력 없이 `Passkey로 로그인`을 사용합니다. 새 기기의 Passkey 인증이 성공한 시점에만 기존 활성 세션이 폐기되므로, 단순 비밀번호 입력이나 실패한 인증으로 기존 기기가 로그아웃되지 않습니다. 기기를 분실하거나 교체할 때는 admin이 계정 목록의 `기기 초기화`를 실행한 뒤 새 기기에서 다시 등록합니다. 초기화는 계정과 학습 기록을 보존하고 Passkey 및 로그인 세션만 제거합니다.
+
+Passkey는 Android의 지문/화면 잠금, iOS·iPadOS의 Face ID/Touch ID/기기 암호, Windows Hello를 지원합니다. 웹 애플리케이션은 특정 생체 수단을 강제하지 않으며 운영체제가 허용한 인증 수단을 표시합니다. 모바일에서는 HTTPS, 최신 브라우저, 정확한 `PASSKEY_RP_ID`가 필요합니다. 현재 서버 호환성을 위해 백엔드 WebAuthn 패키지는 `2.8.0`으로 고정되어 있습니다.
 
 운영 HTTPS 환경에서는 실제 접속 주소에 맞춰 다음처럼 설정합니다. `PASSKEY_RP_ID`에는 스킴이나 포트를 넣지 않습니다.
 
@@ -193,6 +195,8 @@ PASSKEY_RP_NAME=합격비서
 ```
 
 PWA는 Chrome 주소창의 설치 아이콘 또는 브라우저 메뉴의 `앱 설치`로 설치합니다. 서비스 워커는 화면 셸과 정적 자산만 캐시하며 `/api/*` 요청과 인증·문제 데이터는 캐시하지 않습니다. localhost 이외 환경에서는 HTTPS가 필요합니다.
+
+PWA 설치 시 브라우저가 `위험한 사이트`로 경고하는 것은 manifest나 앱 아이콘만으로 해제할 수 없습니다. 인증서 전체 체인과 도메인 일치 여부, HTTP로 되돌아가는 리다이렉트·혼합 콘텐츠, 도메인의 Safe Browsing 상태를 확인해야 합니다. 제공된 Nginx 예시는 동일 출처 CSP와 정적 HTML 무캐시 정책을 포함하지만, 도메인이 차단 목록에 등재된 경우에는 Google Search Console/Safe Browsing 검토 요청이 별도로 필요합니다.
 
 ## 데이터 검증과 가져오기
 
@@ -216,6 +220,7 @@ Set-Location ..\frontend
 npm run lint
 npx tsc -b --pretty false
 npm test
+npm run test:auth-coverage
 npm run build
 Set-Location ..
 ```

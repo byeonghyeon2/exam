@@ -1,5 +1,6 @@
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
 import {cleanup,render,screen} from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {App} from '../App';
@@ -41,7 +42,9 @@ describe('App',()=>{
     expect(screen.getByRole('heading',{name:'로그인'}).querySelector('svg')).not.toBeNull();
     expect(screen.queryByText('CertExam')).not.toBeInTheDocument();
     expect(screen.queryByText('시험 준비의 흐름')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('비밀번호')).toHaveAttribute('type','password');
+    expect(screen.queryByLabelText('임시 비밀번호')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'최초 기기 등록'}));
+    expect(screen.getByLabelText('임시 비밀번호')).toHaveAttribute('type','password');
   });
 
   it('does not expose administrator navigation to learners',async()=>{

@@ -307,3 +307,6 @@ def test_production_build_and_nginx_keep_problem_data_out_of_caches_and_rate_lim
     assert "limit_req_zone" in nginx_config
     assert "limit_req zone=exam_api_per_ip" in nginx_config
     assert 'add_header Cache-Control "no-store, max-age=0" always;' in nginx_config
+    assert "Content-Security-Policy" in nginx_config
+    assert "connect-src 'self'" in nginx_config
+    assert 'add_header Cache-Control "no-cache" always;' in nginx_config

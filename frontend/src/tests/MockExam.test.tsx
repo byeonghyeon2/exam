@@ -56,7 +56,7 @@ function mockExamQuestions(items: Question[] = questions) {
   });
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('MockExamSetup', () => {
   it('keeps the full-width start action disabled until a certification is selected', async () => {
@@ -140,6 +140,27 @@ describe('MockExamSession', () => {
     expect(await screen.findByRole('dialog', { name: '잘못된 접근입니다.' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '확인' }));
     expect(await screen.findByRole('heading', { name: '대시보드 화면' })).toBeInTheDocument();
+  });
+
+  it('shows an ordinary question loading failure without the invalid-access redirect', async () => {
+    vi.spyOn(endpoints, 'examQuestions').mockResolvedValue({ total: 1, question_ids: [1] });
+    vi.spyOn(endpoints, 'examQuestion').mockRejectedValue(new Error('문항 로딩 실패'));
+    renderSession();
+    expect(await screen.findByRole('alert')).toHaveTextContent('문항 로딩 실패');
+    expect(screen.queryByRole('dialog', { name: '잘못된 접근입니다.' })).not.toBeInTheDocument();
+  });
+
+  it('automatically submits when the 130-minute timer expires', async () => {
+    vi.stubGlobal('setInterval', vi.fn((handler: TimerHandler) => {
+      if (typeof handler === 'function') {
+        for (let second = 0; second < 7_800; second += 1) handler();
+      }
+      return 1;
+    }));
+    mockExamQuestions([questions[0]!]);
+    const submit = vi.spyOn(endpoints, 'submitExam').mockResolvedValue({} as never);
+    renderSession();
+    await waitFor(() => expect(submit).toHaveBeenCalledWith('exam-1'));
   });
 
   it('shows loading, request errors, and an empty-exam error explicitly', async () => {

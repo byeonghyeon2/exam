@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:auth-coverage": "vitest run src/tests/passkeys.test.ts src/tests/Login.test.tsx src/tests/PasskeyGate.test.tsx --coverage --coverage.include=src/auth/passkeys.ts --coverage.include=src/pages/Login.tsx --coverage.include=src/pages/PasskeyGate.tsx --coverage.reporter=text --coverage.thresholds.lines=100 --coverage.thresholds.statements=100 --coverage.thresholds.functions=100 --coverage.thresholds.branches=100",
     "test:watch": "vitest"
   },
   "dependencies": {

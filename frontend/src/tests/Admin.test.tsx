@@ -18,6 +18,7 @@ function mockAdminData() {
     password_managed_by_environment: false, passkey_registered: true, created_at: '2026-08-09T00:00:00Z', last_login_at: null,
   }]);
   vi.spyOn(endpoints, 'resetUserPasskey').mockResolvedValue();
+  vi.spyOn(endpoints, 'deleteUser').mockResolvedValue();
   vi.spyOn(endpoints, 'adminReports').mockResolvedValue([{
     id: 7, question_id: 149, question_uid: 'AWS-DEA-C01-000149',
     question_ko: '긴 문제 내용', question_en: 'Long question', report_type: 'explanation_error',
@@ -57,6 +58,10 @@ describe('Admin mobile layout', () => {
     expect(confirm).toHaveBeenCalledWith('기기를 초기화하시겠습니까?\n등록된 Passkey가 삭제되고 모든 로그인 세션이 종료됩니다.');
     await waitFor(() => expect(endpoints.resetUserPasskey).toHaveBeenCalledWith(1));
     await waitFor(() => expect(alert).toHaveBeenCalledWith('기기 초기화가 완료되었습니다.'));
+    await userEvent.click(screen.getByRole('button', { name: '계정 삭제' }));
+    expect(confirm).toHaveBeenLastCalledWith('user 계정을 삭제하시겠습니까?\n학습 기록과 인증 정보가 모두 삭제되며 복구할 수 없습니다.');
+    await waitFor(() => expect(endpoints.deleteUser).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('계정이 삭제되었습니다.'));
     expect(screen.getByText('미분류 문제가 없습니다.')).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '상태/신뢰도' })).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '사용 가능' })).toBeInTheDocument();
@@ -81,6 +86,15 @@ describe('Admin mobile layout', () => {
     vi.mocked(endpoints.resetUserPasskey).mockRejectedValueOnce(new Error('서버 오류'));
     await userEvent.click(screen.getByRole('button', { name: '기기 초기화' }));
     await waitFor(() => expect(alert).toHaveBeenCalledWith('기기 초기화에 실패했습니다. 다시 시도해주세요.'));
+
+    confirm.mockReturnValue(false);
+    await userEvent.click(screen.getByRole('button', { name: '계정 삭제' }));
+    expect(endpoints.deleteUser).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    vi.mocked(endpoints.deleteUser).mockRejectedValueOnce(new Error('서버 오류'));
+    await userEvent.click(screen.getByRole('button', { name: '계정 삭제' }));
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('계정 삭제에 실패했습니다. 다시 시도해주세요.'));
   });
 
   it('keeps admin responsive rules scoped to the admin page', () => {

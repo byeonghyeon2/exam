@@ -60,6 +60,17 @@ describe('browser passkey ceremonies', () => {
     expect(authenticated).toMatchObject({ id: 'legacy', response: { userHandle: 'BA' } });
     expect(create.mock.calls[0]![0].publicKey.excludeCredentials[0].id).toBeInstanceOf(ArrayBuffer);
     expect(get.mock.calls[0]![0].publicKey.allowCredentials[0].id).toBeInstanceOf(ArrayBuffer);
+
+    const noTransports = new LegacyCredential(new Attestation());
+    (noTransports.response as Attestation).getTransports = undefined as unknown as () => string[];
+    create.mockResolvedValueOnce(noTransports);
+    await expect(startPasskeyRegistration({ challenge: 'AQ', user: { id: 'Ag' } }))
+      .resolves.toMatchObject({ response: { transports: [] } });
+    const noUserHandle = new LegacyCredential(new Assertion());
+    (noUserHandle.response as Assertion).userHandle = null as unknown as ArrayBuffer;
+    get.mockResolvedValueOnce(noUserHandle);
+    await expect(startPasskeyAuthentication({ challenge: 'AQ' }))
+      .resolves.toMatchObject({ response: { userHandle: null } });
   });
 
   it('rejects unsupported contexts and cancelled ceremonies', async () => {
@@ -74,6 +85,14 @@ describe('browser passkey ceremonies', () => {
     } });
     await expect(startPasskeyRegistration({ challenge: 'AQ', user: { id: 'AQ' } })).rejects.toThrow('취소');
     await expect(startPasskeyAuthentication({ challenge: 'AQ' })).rejects.toThrow('취소');
+
+    vi.stubGlobal('isSecureContext', true);
+    vi.stubGlobal('PublicKeyCredential', undefined);
+    await expect(startPasskeyAuthentication({ challenge: 'AQ' })).rejects.toThrow('Passkey');
+    class SupportedCredential {}
+    vi.stubGlobal('PublicKeyCredential', SupportedCredential);
+    Object.defineProperty(navigator, 'credentials', { configurable: true, value: undefined });
+    await expect(startPasskeyAuthentication({ challenge: 'AQ' })).rejects.toThrow('Passkey');
   });
 
   it('maps browser and server failures to stable Korean guidance', () => {
@@ -83,6 +102,7 @@ describe('browser passkey ceremonies', () => {
     expect(passkeyErrorMessage(new DOMException('', 'SecurityError'), false)).toBe(
       '현재 접속 주소에서는 Passkey 인증을 사용할 수 없습니다. 관리자에게 문의해주세요.',
     );
+    expect(passkeyErrorMessage(new DOMException('', 'SecurityError'), true)).toContain('등록');
     expect(passkeyErrorMessage(new DOMException('', 'NotSupportedError'), false)).toBe(
       '이 브라우저 또는 기기는 Passkey를 지원하지 않습니다. 관리자에게 문의해주세요.',
     );
@@ -92,6 +112,7 @@ describe('browser passkey ceremonies', () => {
     expect(passkeyErrorMessage(new DOMException('', 'AbortError'), true)).toBe(
       'Passkey 등록이 중단되었습니다. 다시 시도해주세요.',
     );
+    expect(passkeyErrorMessage(new DOMException('', 'AbortError'), false)).toContain('인증');
     expect(passkeyErrorMessage(new Error('등록된 Passkey와 일치하지 않습니다'), false)).toBe(
       '인증키가 일치하지 않습니다. 관리자에게 문의해주세요.',
     );
@@ -101,9 +122,12 @@ describe('browser passkey ceremonies', () => {
     expect(passkeyErrorMessage(new Error('Passkey 요청이 만료되었습니다'), true)).toBe(
       'Passkey 등록 요청이 만료되었습니다. 다시 시도해주세요.',
     );
+    expect(passkeyErrorMessage(new Error('Passkey 요청이 만료되었습니다'), false)).toContain('인증 요청');
     expect(passkeyErrorMessage(new Error('HTTPS를 지원하지 않습니다'), false)).toBe(
       '이 브라우저 또는 접속 환경에서는 Passkey를 사용할 수 없습니다. 관리자에게 문의해주세요.',
     );
+    expect(passkeyErrorMessage(new Error('지원하지 않습니다'), false)).toContain('접속 환경');
+    expect(passkeyErrorMessage(new Error('검증하지 못했습니다'), true)).toContain('등록에 실패');
     expect(passkeyErrorMessage(new Error('unknown'), true)).toBe(
       'Passkey 등록에 실패했습니다. 다시 시도하거나 관리자에게 문의해주세요.',
     );

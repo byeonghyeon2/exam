@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -6,10 +7,21 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import Settings, get_settings
-from app.db.base import Base
+from app.db.base import Base, utcnow
 from app.db.session import get_db
 from app.main import app
-from app.models.entities import Certification, Domain, Question, User, WrongNote
+from app.models.entities import (
+    Certification,
+    Domain,
+    MockExam,
+    MockExamQuestion,
+    PasskeyCredential,
+    Question,
+    StudyAttempt,
+    StudySessionRecord,
+    User,
+    WrongNote,
+)
 from app.services.auth import create_session, hash_password
 
 
@@ -120,9 +132,48 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             assert "Secure" in secure_login.headers["set-cookie"]
             secure_logout = client.post("/api/v1/auth/logout")
             assert "Secure" in secure_logout.headers["set-cookie"]
+            settings.auth_cookie_secure = False
+            assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "strong-admin-password"}).status_code == 200
+            with session_factory() as db:
+                learner = db.scalar(select(User).where(User.username == "learner"))
+                certification = db.scalar(select(Certification))
+                question = db.scalar(select(Question).where(Question.question_uid == "LEARNER-WRONG"))
+                db.add(StudySessionRecord(
+                    session_id="delete-owned-study", user_id=learner.id,
+                    certification_id=certification.id, question_ids_json=[question.id],
+                ))
+                db.add(StudyAttempt(
+                    user_id=learner.id, session_id="delete-owned-study", question_id=question.id,
+                    selected_answers_json=["A"], is_correct=False,
+                ))
+                exam = MockExam(
+                    user_id=learner.id, certification_id=certification.id, question_count=1,
+                    duration_minutes=10, expires_at=utcnow() + timedelta(minutes=10), passing_score=70,
+                )
+                db.add(exam)
+                db.flush()
+                db.add(MockExamQuestion(mock_exam_id=exam.id, question_id=question.id, question_order=1))
+                db.add(PasskeyCredential(
+                    user_id=learner.id, credential_id=b"delete-owned-key",
+                    public_key=b"public-key", transports_json=["internal"],
+                ))
+                db.commit()
+            assert client.delete(f"/api/v1/admin/users/{learner_login.json()['id']}").status_code == 204
+            assert client.delete(f"/api/v1/admin/users/{logged_in.json()['id']}").status_code == 409
+            assert client.delete("/api/v1/admin/users/999999").status_code == 404
     finally:
         app.dependency_overrides.clear()
 
     with session_factory() as db:
         users = list(db.scalars(select(User).order_by(User.username)))
-        assert [(user.username, user.role) for user in users] == [("admin", "admin"), ("learner", "user")]
+        assert [(user.username, user.role) for user in users] == [("admin", "admin")]
+        learner_question_id = db.scalar(
+            select(Question.id).where(Question.question_uid == "LEARNER-WRONG")
+        )
+        assert learner_question_id is not None
+        assert db.scalar(select(WrongNote).where(WrongNote.question_id == learner_question_id)) is None
+        assert db.scalar(select(StudySessionRecord)) is None
+        assert db.scalar(select(StudyAttempt)) is None
+        assert db.scalar(select(MockExam)) is None
+        assert db.scalar(select(MockExamQuestion)) is None
+        assert db.scalar(select(PasskeyCredential)) is None

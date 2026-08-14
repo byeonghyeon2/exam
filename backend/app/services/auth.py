@@ -35,13 +35,18 @@ def verify_password(password: str, encoded: str) -> bool:
 
 
 def create_session(
-    db: Session, user: User, settings: Settings, purpose: str = "full"
+    db: Session,
+    user: User,
+    settings: Settings,
+    purpose: str = "full",
+    revoke_existing: bool = True,
 ) -> tuple[AuthSession, str]:
-    db.execute(
-        update(AuthSession)
-        .where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
-        .values(revoked_at=utcnow())
-    )
+    if revoke_existing:
+        db.execute(
+            update(AuthSession)
+            .where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
+            .values(revoked_at=utcnow())
+        )
     raw_token = secrets.token_urlsafe(32)
     session = AuthSession(
         user_id=user.id,

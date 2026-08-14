@@ -10,7 +10,6 @@ from webauthn import (
     verify_registration_response,
 )
 from webauthn.helpers.structs import (
-    AuthenticatorAttachment,
     AuthenticatorSelectionCriteria,
     ResidentKeyRequirement,
     UserVerificationRequirement,
@@ -43,7 +42,6 @@ def registration_options(settings: Settings, username: str, user_id: int, challe
         user_display_name=username,
         challenge=challenge,
         authenticator_selection=AuthenticatorSelectionCriteria(
-            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
             resident_key=ResidentKeyRequirement.REQUIRED,
             require_resident_key=True,
             user_verification=UserVerificationRequirement.REQUIRED,

@@ -28,15 +28,35 @@ function ActiveExam({abandon}:{abandon:()=>Promise<unknown>}){
   return <h1>모의고사 화면</h1>;
 }
 
+function DirectExit(){
+  const {requestExit}=useStudyExitGuard();
+  return <button onClick={()=>requestExit('/certifications')}>자격증으로 이동</button>;
+}
+
 function renderGuard(saveAndLeave=vi.fn().mockResolvedValue({}),discardAndLeave=vi.fn().mockResolvedValue({})){
   const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
-  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/study/test']}><Routes><Route element={<Layout/>}><Route path="study/:id" element={<ActiveStudy saveAndLeave={saveAndLeave} discardAndLeave={discardAndLeave}/>}/><Route index element={<h1>대시보드 화면</h1>}/></Route></Routes></MemoryRouter></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/study/test']}><Routes><Route element={<Layout/>}><Route path="study/:id" element={<ActiveStudy saveAndLeave={saveAndLeave} discardAndLeave={discardAndLeave}/>}/><Route path="certifications" element={<h1>자격증 화면</h1>}/><Route index element={<h1>대시보드 화면</h1>}/></Route></Routes></MemoryRouter></QueryClientProvider>);
   return {saveAndLeave,discardAndLeave};
 }
 
 afterEach(()=>{cleanup();vi.restoreAllMocks()});
 
 describe('Study exit guard',()=>{
+  it('navigates immediately when no learning guard is active',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response(admin)));
+    const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+    render(<QueryClientProvider client={client}><MemoryRouter><Routes><Route element={<Layout/>}><Route index element={<h1>대시보드 화면</h1>}/><Route path="certifications" element={<h1>자격증 화면</h1>}/></Route></Routes></MemoryRouter></QueryClientProvider>);
+    await userEvent.click(await screen.findByRole('link',{name:'자격증'}));
+    expect(await screen.findByRole('heading',{name:'자격증 화면'})).toBeInTheDocument();
+  });
+
+  it('honors direct guarded-navigation requests when no guard is active',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response(admin)));
+    const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/direct']}><Routes><Route element={<Layout/>}><Route path="direct" element={<DirectExit/>}/><Route path="certifications" element={<h1>자격증 화면</h1>}/></Route></Routes></MemoryRouter></QueryClientProvider>);
+    await userEvent.click(await screen.findByRole('button',{name:'자격증으로 이동'}));
+    expect(await screen.findByRole('heading',{name:'자격증 화면'})).toBeInTheDocument();
+  });
   it('keeps studying when the user cancels navigation',async()=>{
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response(admin)));
     renderGuard();

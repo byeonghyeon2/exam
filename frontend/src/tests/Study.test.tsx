@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -46,12 +46,56 @@ function renderStudy(requestExit = vi.fn()) {
   return { ...view, client };
 }
 
+function renderStudyRoute(route: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <StudyExitGuardContext.Provider value={{setGuard:vi.fn(),requestExit:vi.fn()}}>
+        <MemoryRouter initialEntries={[route]}><Routes>
+          <Route path="/study" element={<Study />} />
+          <Route path="/study/:id" element={<Study />} />
+          <Route path="/" element={<h1>대시보드 화면</h1>} />
+        </Routes></MemoryRouter>
+      </StudyExitGuardContext.Provider>
+    </QueryClientProvider>,
+  );
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
 describe('Study', () => {
+  it('creates an all-domain study from query options and navigates to its session', async () => {
+    const create = vi.spyOn(endpoints, 'createStudy').mockResolvedValue({ ...session, id: 'created-session' });
+    vi.spyOn(endpoints, 'study').mockResolvedValue({ ...session, id: 'created-session' });
+    renderStudyRoute('/study?cert=SAA-C03&domain=D1&all=true');
+    expect(await screen.findByText('문제입니다')).toBeInTheDocument();
+    expect(create).toHaveBeenCalledWith({
+      certification_code: 'SAA-C03', domain_code: 'D1', mode: 'random', question_count: null,
+    });
+  });
+
+  it('shows session creation loading and retryable creation failures', async () => {
+    let rejectCreate!: (error: Error) => void;
+    vi.spyOn(endpoints, 'createStudy').mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectCreate = reject; }),
+    );
+    renderStudyRoute('/study');
+    expect(screen.getByRole('status')).toHaveTextContent('학습 세션을 준비하는 중');
+    await waitFor(() => expect(endpoints.createStudy).toHaveBeenCalled());
+    rejectCreate(new Error('학습 생성 실패'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('학습 생성 실패');
+    await userEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+    expect(endpoints.createStudy).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows an ordinary session loading failure as a retryable error', async () => {
+    vi.spyOn(endpoints, 'study').mockRejectedValue(new Error('학습 조회 실패'));
+    renderStudy();
+    expect(await screen.findByRole('alert')).toHaveTextContent('학습 조회 실패');
+  });
   it('allows a single answer to be deselected before grading', async () => {
     vi.spyOn(endpoints, 'study').mockResolvedValue(session);
     const user = userEvent.setup();
@@ -84,6 +128,45 @@ describe('Study', () => {
     const event = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('intercepts browser back navigation while a study is active', async () => {
+    vi.spyOn(endpoints, 'study').mockResolvedValue(session);
+    const requestExit = vi.fn();
+    renderStudy(requestExit);
+    await screen.findByRole('button', { name: '학습 나가기' });
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(requestExit).toHaveBeenCalledWith('/');
+  });
+
+  it('offers final result organization when every question is answered but not finalized', async () => {
+    vi.spyOn(endpoints, 'study').mockResolvedValue({ ...session, current_index: 1, question: undefined });
+    vi.spyOn(endpoints, 'completeStudy').mockResolvedValue({
+      total_questions: 1, answered_count: 1, correct_count: 1, wrong_count: 0, finalized: true,
+    });
+    renderStudy();
+    expect(await screen.findByText('모든 문제를 풀었습니다')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '학습 결과 정리' })).toBeInTheDocument();
+  });
+
+  it('supports selecting, deselecting, and limiting multiple-response answers', async () => {
+    vi.spyOn(endpoints, 'study').mockResolvedValue({
+      ...session,
+      question: { ...session.question, question_type: 'multiple_response' as const, required_answer_count: 2 },
+    });
+    renderStudy();
+    const user = userEvent.setup();
+    const first = await screen.findByRole('checkbox', { name: /사용자 선택/ });
+    const second = screen.getByRole('checkbox', { name: /다른 선택/ });
+    const third = screen.getByRole('checkbox', { name: /실제 정답/ });
+    await user.click(first);
+    await user.click(second);
+    await user.click(third);
+    expect(third).not.toBeChecked();
+    await user.click(first);
+    expect(first).not.toBeChecked();
+    await user.click(third);
+    expect(third).toBeChecked();
   });
 
   it('explains an invalid completed-session revisit and replaces it with the dashboard', async () => {
