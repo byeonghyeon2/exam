@@ -30,3 +30,13 @@ def test_passkey_service_derives_local_rp_and_verifies_both_ceremonies(monkeypat
     ) == "authenticated"
     assert authentication_calls["credential_current_sign_count"] == 3
     assert authentication_calls["require_user_verification"] is True
+
+
+def test_authentication_uses_discoverable_passkey_selection() -> None:
+    settings = Settings(frontend_origin="http://localhost:5173", passkey_rp_id="localhost")
+
+    options = passkeys.authentication_options(settings, b"challenge")
+
+    assert options["rpId"] == "localhost"
+    assert options["userVerification"] == "required"
+    assert "allowCredentials" not in options

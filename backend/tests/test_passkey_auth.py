@@ -22,13 +22,13 @@ from app.db.base import Base, utcnow
 from app.db.session import get_db
 from app.main import app
 from app.models.entities import AuthSession, PasskeyCredential, User
+from app.services.auth import hash_password
 
 
 def test_passkey_credential_id_is_mysql_indexable() -> None:
     ddl = str(CreateTable(PasskeyCredential.__table__).compile(dialect=mysql.dialect()))
 
     assert "credential_id VARBINARY(1024)" in ddl
-from app.services.auth import hash_password
 
 
 def test_managed_user_must_register_then_authenticate_with_one_passkey(monkeypatch) -> None:
@@ -112,7 +112,9 @@ def test_managed_user_must_register_then_authenticate_with_one_passkey(monkeypat
             )
             assert pending.json()["passkey_authentication_required"] is True
             assert client.get("/api/v1/certifications").status_code == 403
-            assert client.post("/api/v1/auth/passkeys/authentication/options").status_code == 200
+            authentication_options = client.post("/api/v1/auth/passkeys/authentication/options")
+            assert authentication_options.status_code == 200
+            assert "allowCredentials" not in authentication_options.json()
             assert client.post(
                 "/api/v1/auth/passkeys/authentication/verify",
                 json={"credential": {"id": "wrong-credential"}},

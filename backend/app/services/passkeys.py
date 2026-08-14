@@ -12,7 +12,6 @@ from webauthn import (
 from webauthn.helpers.structs import (
     AuthenticatorAttachment,
     AuthenticatorSelectionCriteria,
-    PublicKeyCredentialDescriptor,
     ResidentKeyRequirement,
     UserVerificationRequirement,
 )
@@ -53,14 +52,15 @@ def registration_options(settings: Settings, username: str, user_id: int, challe
     return json.loads(options_to_json(options))
 
 
-def authentication_options(settings: Settings, credential_id: bytes, challenge: bytes) -> dict:
+def authentication_options(settings: Settings, challenge: bytes) -> dict:
     options = generate_authentication_options(
         rp_id=relying_party_id(settings),
         challenge=challenge,
-        allow_credentials=[PublicKeyCredentialDescriptor(id=credential_id)],
         user_verification=UserVerificationRequirement.REQUIRED,
     )
-    return json.loads(options_to_json(options))
+    payload = json.loads(options_to_json(options))
+    payload.pop("allowCredentials", None)
+    return payload
 
 
 def verify_registration(settings: Settings, credential: dict, challenge: bytes):

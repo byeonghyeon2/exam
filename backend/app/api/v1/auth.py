@@ -285,9 +285,7 @@ def passkey_authentication_options(
     if credential is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "등록된 Passkey가 없습니다")
     challenge = passkeys.new_challenge()
-    options = passkeys.authentication_options(
-        settings, credential.credential_id, challenge
-    )
+    options = passkeys.authentication_options(settings, challenge)
     save_challenge(db, session, challenge, "authentication", settings)
     return options
 
