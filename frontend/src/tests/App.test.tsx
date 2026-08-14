@@ -47,6 +47,14 @@ describe('App',()=>{
     expect(screen.getByLabelText('임시 비밀번호')).toHaveAttribute('type','password');
   });
 
+  it('keeps authentication errors distinct from temporary server outages',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({detail:'DB 연결 실패'},false,503)));
+    renderApp('/mock-exam/7');
+    expect(await screen.findByRole('alert')).toHaveTextContent('서버 연결이 일시적으로 끊겼습니다');
+    expect(screen.queryByRole('heading',{name:'로그인'})).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'다시 연결'})).toBeInTheDocument();
+  });
+
   it('does not expose administrator navigation to learners',async()=>{
     vi.stubGlobal('fetch',vi.fn((input:string|URL)=>String(input).includes('/auth/me')?Promise.resolve(response(learner)):new Promise(()=>{})));
     renderApp('/');

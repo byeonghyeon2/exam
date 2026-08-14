@@ -395,7 +395,18 @@ def mock_questions(exam_id: int, db: Db, user: CurrentUser) -> dict[str, Any]:
     exam = get_exam(db, exam_id, user)
     ensure_open(exam)
     question_ids = [item.question_id for item in exam.questions]
-    return {"total": len(question_ids), "question_ids": question_ids}
+    answers = {
+        str(item.question_id): item.selected_answers_json or []
+        for item in exam.questions
+        if item.answered_at is not None
+    }
+    expires_at = exam.expires_at if exam.expires_at.tzinfo else exam.expires_at.replace(tzinfo=UTC)
+    return {
+        "total": len(question_ids),
+        "question_ids": question_ids,
+        "answers": answers,
+        "expires_at": expires_at.isoformat(),
+    }
 
 
 @router.get("/mock-exams/{exam_id}/questions/{question_id}", response_model=QuestionOut)

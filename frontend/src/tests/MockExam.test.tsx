@@ -8,6 +8,7 @@ import { ApiError } from '../api/client';
 import { StudyExitGuardContext } from '../components/StudyExitGuard';
 import { MockExamSession, MockExamSetup } from '../pages/MockExam';
 import type { Question } from '../types';
+import { clearAnswerDraftsForTests, listSessionDrafts } from '../offline/answerDrafts';
 import styles from '../styles.css?raw';
 
 const questions: Question[] = [
@@ -35,8 +36,10 @@ function renderSetup() {
 }
 
 function renderSession(setGuard=vi.fn(),requestExit=vi.fn()) {
+  const queryClient=client();
+  queryClient.setQueryData(['me'],{id:2,username:'learner',role:'user'});
   return render(
-    <QueryClientProvider client={client()}><StudyExitGuardContext.Provider value={{setGuard,requestExit}}><MemoryRouter initialEntries={['/mock-exam/exam-1']}><Routes>
+    <QueryClientProvider client={queryClient}><StudyExitGuardContext.Provider value={{setGuard,requestExit}}><MemoryRouter initialEntries={['/mock-exam/exam-1']}><Routes>
       <Route path="/mock-exam/:id" element={<MockExamSession />} />
       <Route path="/results/:id" element={<h1>결과 화면</h1>} />
       <Route path="/" element={<h1>대시보드 화면</h1>} />
@@ -56,7 +59,7 @@ function mockExamQuestions(items: Question[] = questions) {
   });
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(async() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); await clearAnswerDraftsForTests(); });
 
 describe('MockExamSetup', () => {
   it('keeps the full-width start action disabled until a certification is selected', async () => {
@@ -126,6 +129,19 @@ describe('mobile exam regression styles', () => {
 });
 
 describe('MockExamSession', () => {
+  it('restores server answers and keeps a failed save as a device draft',async()=>{
+    vi.spyOn(endpoints,'examQuestions').mockResolvedValue({total:1,question_ids:[1],answers:{'1':['B']},expires_at:new Date(Date.now()+60_000).toISOString()});
+    vi.spyOn(endpoints,'examQuestion').mockResolvedValue(questions[0]!);
+    vi.spyOn(endpoints,'saveAnswer').mockRejectedValue(new Error('DB 연결 실패'));
+    const user=userEvent.setup();
+    renderSession();
+    const second=await screen.findByRole('radio',{name:/둘째 답안/});
+    expect(second).toBeChecked();
+    await user.click(screen.getByRole('radio',{name:/첫 답안/}));
+    expect(await screen.findByRole('status',{name:'답안 저장 상태'})).toHaveTextContent('임시 보관');
+    await waitFor(async()=>expect(await listSessionDrafts(2,'mock-exam','exam-1')).toMatchObject([{selectedAnswers:['A'],pending:true}]));
+  });
+
   it('explains an invalid submitted-exam revisit and replaces it with the dashboard', async () => {
     vi.spyOn(endpoints, 'examQuestions').mockRejectedValue(new ApiError('Exam is already submitted', 409));
     const user = userEvent.setup();

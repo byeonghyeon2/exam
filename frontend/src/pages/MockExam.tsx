@@ -5,6 +5,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
 import { ErrorState, InvalidAccess, isInvalidSessionError, Loading, PageHeader, Progress } from '../components/common';
 import { useStudyExitGuard } from '../components/StudyExitGuard';
+import { deleteSessionDrafts, listSessionDrafts, saveAnswerDraft } from '../offline/answerDrafts';
+import type { User } from '../types';
 
 export function MockExamSetup() {
   const navigate = useNavigate();
@@ -21,12 +23,14 @@ export function MockExamSession() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const userId=queryClient.getQueryData<User>(['me'])?.id??0;
   const { setGuard, requestExit } = useStudyExitGuard();
   const questions = useQuery({ queryKey: ['exam-questions', id], queryFn: () => endpoints.examQuestions(id) });
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string[]>>({});
   const [seconds, setSeconds] = useState(7800);
   const [confirmSubmit, setConfirmSubmit] = useState(false);
+  const [syncInterrupted,setSyncInterrupted]=useState(false);
   const questionRef = useRef<HTMLElement>(null);
   const currentQuestionId = questions.data?.question_ids[index];
   const currentQuestion = useQuery({
@@ -39,7 +43,7 @@ export function MockExamSession() {
       await Promise.all(Object.entries(answers).map(([questionId, selected]) => endpoints.saveAnswer(id, Number(questionId), selected)));
       return endpoints.submitExam(id);
     },
-    onSuccess: () => navigate(`/results/${id}`),
+    onSuccess: () => {void deleteSessionDrafts(userId,'mock-exam',id);navigate(`/results/${id}`)},
   });
   const { mutate: submitExam } = submit;
   const questionIds = useMemo(() => questions.data?.question_ids ?? [], [questions.data]);
@@ -49,19 +53,52 @@ export function MockExamSession() {
   );
   const answeredCount = questionIds.length - unansweredNumbers.length;
 
+  useEffect(()=>{
+    if(!questions.data)return;
+    let active=true;
+    void listSessionDrafts(userId,'mock-exam',id).then(drafts=>{
+      if(!active)return;
+      const restored:Record<number,string[]>={};
+      Object.entries(questions.data?.answers??{}).forEach(([questionId,value])=>{restored[Number(questionId)]=value});
+      drafts.forEach(draft=>{restored[draft.questionId]=draft.selectedAnswers});
+      setAnswers(restored);
+      const latest=[...drafts].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))[0];
+      if(latest&&latest.currentIndex<questions.data!.total)setIndex(latest.currentIndex);
+      if(questions.data?.expires_at)setSeconds(Math.max(0,Math.ceil((new Date(questions.data.expires_at).getTime()-Date.now())/1000)));
+      setSyncInterrupted(drafts.some(draft=>draft.pending));
+    });
+    return()=>{active=false};
+  },[id,questions.data,userId]);
+
   useEffect(() => {
     if (!questions.data || submit.isSuccess) {
       setGuard(current => current?.sessionId === id ? null : current);
       return;
     }
-    setGuard({kind:'exam',sessionId:id,answeredCount,totalCount:questions.data.total,unansweredNumbers,abandon:()=>endpoints.leaveExam(id)});
+    setGuard({kind:'exam',sessionId:id,answeredCount,totalCount:questions.data.total,unansweredNumbers,abandon:async()=>{const result=await endpoints.leaveExam(id);await deleteSessionDrafts(userId,'mock-exam',id);return result}});
     const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', warnBeforeUnload);
       setGuard(current => current?.sessionId === id ? null : current);
     };
-  }, [answeredCount, id, questions.data, setGuard, submit.isSuccess, unansweredNumbers]);
+  }, [answeredCount, id, questions.data, setGuard, submit.isSuccess, unansweredNumbers, userId]);
+  useEffect(()=>{
+    if(!syncInterrupted)return;
+    const synchronize=async()=>{
+      const pending=(await listSessionDrafts(userId,'mock-exam',id)).filter(draft=>draft.pending);
+      if(!pending.length){setSyncInterrupted(false);return}
+      try{
+        for(const draft of pending){
+          await endpoints.saveAnswer(id,draft.questionId,draft.selectedAnswers);
+          await saveAnswerDraft({...draft,pending:false});
+        }
+        setSyncInterrupted(false);
+      }catch{setSyncInterrupted(true)}
+    };
+    const timer=window.setInterval(()=>void synchronize(),5_000);
+    return()=>window.clearInterval(timer);
+  },[id,syncInterrupted,userId]);
   useEffect(() => {
     if (!questions.data || submit.isSuccess) return;
     const marker = { ...window.history.state, certflowGuard: `exam-${id}` };
@@ -99,7 +136,12 @@ export function MockExamSession() {
     const multiple = question.question_type === 'multiple_response';
     const next = multiple ? (selected.includes(choiceId) ? selected.filter(item => item !== choiceId) : [...selected, choiceId]) : (selected.includes(choiceId) ? [] : [choiceId]);
     setAnswers(current => ({ ...current, [question.id]: next }));
-    void endpoints.saveAnswer(id, question.id, next);
+    void saveAnswerDraft({userId,kind:'mock-exam',sessionId:id,questionId:question.id,selectedAnswers:next,currentIndex:index,pending:true})
+      .then(()=>endpoints.saveAnswer(id, question.id, next))
+      .then(()=>saveAnswerDraft({userId,kind:'mock-exam',sessionId:id,questionId:question.id,selectedAnswers:next,currentIndex:index,pending:false}))
+      .then(()=>listSessionDrafts(userId,'mock-exam',id))
+      .then(drafts=>setSyncInterrupted(drafts.some(draft=>draft.pending)))
+      .catch(()=>setSyncInterrupted(true));
   };
   const moveTo = async (nextIndex: number) => {
     const nextQuestionId = questions.data!.question_ids[nextIndex];
@@ -116,6 +158,7 @@ export function MockExamSession() {
     <div className="exam-content" aria-busy={submit.isPending}>
       <div className="exam-bar"><b>모의고사</b><span className="timer"><Clock3 /> {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</span><button disabled={submit.isPending} onClick={() => setConfirmSubmit(true)}>시험 제출</button></div>
       <Progress label="시험 진행" value={((index + 1) / questions.data!.total) * 100} />
+      {syncInterrupted&&<div className="connection-banner" role="status" aria-label="답안 저장 상태">서버 연결이 끊겨 답안을 이 기기에 임시 보관했습니다. 연결되면 자동 저장됩니다.</div>}
       <section className="question" ref={questionRef}><span className="badge">문제 {index + 1} · {question.question_type === 'multiple_response' ? '복수 선택' : '단일 선택'}</span><p className="question-en">{question.question_en}</p><h2>{question.question_ko}</h2><fieldset disabled={submit.isPending}><legend className="sr-only">답안</legend>{question.choices.map(choice => {const multiple=question.question_type==='multiple_response';return <label key={choice.id} className={`choice ${selected.includes(choice.id) ? 'selected' : ''}`}><input type="checkbox" role={multiple?undefined:'radio'} checked={selected.includes(choice.id)} onChange={() => choose(choice.id)} /><b>{choice.id}</b><span>{choice.text_ko}<small>{choice.text_en}</small></span></label>})}</fieldset><div className="actions"><button disabled={submit.isPending || index === 0} onClick={() => moveTo(index - 1)}>이전</button><button className="button" disabled={submit.isPending || index === questions.data!.total - 1} onClick={() => moveTo(index + 1)}>다음 문제</button></div></section>
       <div className="palette" aria-label="문제 이동">{questions.data!.question_ids.map((questionId, itemIndex) => <button disabled={submit.isPending} aria-label={`${itemIndex + 1}번 문제`} className={`${itemIndex === index ? 'current' : ''} ${answers[questionId]?.length ? 'answered' : ''}`} key={questionId} onClick={() => moveTo(itemIndex)}>{itemIndex + 1}</button>)}</div>
       {submit.isError && <ErrorState error={submit.error} />}

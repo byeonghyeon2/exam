@@ -101,7 +101,11 @@ def test_mock_exam_delivers_only_one_owned_question_body_at_a_time() -> None:
         with TestClient(app) as client:
             listing = client.get(f"/api/v1/mock-exams/{exam_id}/questions")
             assert listing.status_code == 200
-            assert listing.json() == {"total": 2, "question_ids": assigned_ids}
+            listing_data = listing.json()
+            assert listing_data["total"] == 2
+            assert listing_data["question_ids"] == assigned_ids
+            assert listing_data["answers"] == {}
+            assert listing_data["expires_at"].endswith("+00:00")
             assert "Secret question" not in listing.text
             assert "answers_json" not in listing.text
 

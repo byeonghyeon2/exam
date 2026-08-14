@@ -7,6 +7,7 @@ import { endpoints } from '../api/queries';
 import { ApiError } from '../api/client';
 import { StudyExitGuardContext } from '../components/StudyExitGuard';
 import { Study } from '../pages/Study';
+import { clearAnswerDraftsForTests, saveAnswerDraft } from '../offline/answerDrafts';
 
 const session = {
   id: 'session-1',
@@ -32,6 +33,7 @@ const session = {
 
 function renderStudy(requestExit = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(['me'],{id:2,username:'learner',role:'user'});
   const view = render(
     <QueryClientProvider client={client}>
       <StudyExitGuardContext.Provider value={{setGuard:vi.fn(),requestExit}}><MemoryRouter initialEntries={['/study/session-1']}>
@@ -64,9 +66,17 @@ function renderStudyRoute(route: string) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  return clearAnswerDraftsForTests();
 });
 
 describe('Study', () => {
+  it('restores an unsubmitted selection after an abnormal close',async()=>{
+    await saveAnswerDraft({userId:2,kind:'study',sessionId:'session-1',questionId:10,selectedAnswers:['B'],currentIndex:0,pending:true});
+    vi.spyOn(endpoints,'study').mockResolvedValue(session);
+    renderStudy();
+    expect(await screen.findByRole('radio',{name:/다른 선택/})).toBeChecked();
+  });
+
   it('creates an all-domain study from query options and navigates to its session', async () => {
     const create = vi.spyOn(endpoints, 'createStudy').mockResolvedValue({ ...session, id: 'created-session' });
     vi.spyOn(endpoints, 'study').mockResolvedValue({ ...session, id: 'created-session' });

@@ -7,6 +7,8 @@ import type { Explanation, Question, StudySession, Submission } from '../types';
 import { ErrorState, InvalidAccess, isInvalidSessionError, Loading, PageHeader, Progress } from '../components/common';
 import { ReportModal } from '../components/ReportModal';
 import { useStudyExitGuard } from '../components/StudyExitGuard';
+import { deleteQuestionDraft, deleteSessionDrafts, listSessionDrafts, saveAnswerDraft } from '../offline/answerDrafts';
+import type { User } from '../types';
 
 const DEFAULT_STUDY_QUESTION_COUNT = 10;
 
@@ -15,6 +17,7 @@ export function Study() {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const userId=queryClient.getQueryData<User>(['me'])?.id??0;
   const { setGuard, requestExit } = useStudyExitGuard();
   const [currentAnswered, setCurrentAnswered] = useState(false);
   const certificationCode = new URLSearchParams(location.search).get('cert') ?? 'DEA-C01';
@@ -42,12 +45,9 @@ export function Study() {
   });
   const complete = useMutation({
     mutationFn: () => endpoints.completeStudy(id!),
-    onSuccess: summary => queryClient.setQueryData<StudySession>(['study', id], current => current ? ({
-      ...current,
-      current_index: summary.answered_count,
-      question: undefined,
-      summary,
-    }) : current),
+    onSuccess: summary => {void deleteSessionDrafts(userId,'study',id!);queryClient.setQueryData<StudySession>(['study', id], current => current ? ({
+      ...current,current_index: summary.answered_count,question: undefined,summary,
+    }) : current)},
   });
   const sessionActive = Boolean(id && session.data && !session.data.summary?.finalized);
   const answeredCount = (session.data?.current_index ?? 0) + (currentAnswered ? 1 : 0);
@@ -60,8 +60,8 @@ export function Study() {
       kind: 'study',
       sessionId: id,
       answeredCount,
-      saveAndLeave: () => endpoints.leaveStudy(id, true),
-      discardAndLeave: () => endpoints.leaveStudy(id, false),
+      saveAndLeave: async() => {const result=await endpoints.leaveStudy(id,true);await deleteSessionDrafts(userId,'study',id);return result},
+      discardAndLeave: async() => {const result=await endpoints.leaveStudy(id,false);await deleteSessionDrafts(userId,'study',id);return result},
     });
     const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warnBeforeUnload);
@@ -69,7 +69,7 @@ export function Study() {
       window.removeEventListener('beforeunload', warnBeforeUnload);
       setGuard(current => current?.sessionId === id ? null : current);
     };
-  }, [answeredCount, id, sessionActive, setGuard]);
+  }, [answeredCount, id, sessionActive, setGuard, userId]);
   useEffect(() => {
     if (!sessionActive || !id) return;
     const marker = { ...window.history.state, certflowGuard: `study-${id}` };
@@ -102,6 +102,7 @@ export function Study() {
       onComplete={() => complete.mutateAsync()}
       onAnswered={() => setCurrentAnswered(true)}
       completeError={complete.error}
+      userId={userId}
       onExit={() => requestExit('/')}
       onReturnToWrongNotes={async () => {
         await queryClient.invalidateQueries({ queryKey: ['study-history'], refetchType: 'all' });
@@ -111,7 +112,7 @@ export function Study() {
   );
 }
 
-function QuestionView({ question, sessionId, session, onNext, onComplete, onAnswered, onExit, onReturnToWrongNotes, completeError }: {
+function QuestionView({ question, sessionId, session, onNext, onComplete, onAnswered, onExit, onReturnToWrongNotes, completeError, userId }: {
   question?: Question;
   sessionId: string;
   session: StudySession;
@@ -121,6 +122,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
   onExit: () => void;
   onReturnToWrongNotes: () => Promise<void>;
   completeError: Error | null;
+  userId:number;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [result, setResult] = useState<Submission>();
@@ -129,7 +131,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
   const questionRef = useRef<HTMLElement>(null);
   const submit = useMutation({
     mutationFn: () => endpoints.submitStudy(question!.id, sessionId, { selected_answers: selected }),
-    onSuccess: value => { setResult(value); onAnswered(); },
+    onSuccess: value => { setResult(value);onAnswered();if(question)void deleteQuestionDraft(userId,'study',sessionId,question.id); },
   });
   const explanation = useMutation({
     mutationFn: () => endpoints.generateExplanation(question!.id),
@@ -152,6 +154,15 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
       if (!finish) document.querySelector('.question')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
     } finally { setMovingNext(false); }
   };
+  useEffect(()=>{
+    if(!question)return;
+    let active=true;
+    void listSessionDrafts(userId,'study',sessionId).then(drafts=>{
+      const draft=drafts.find(item=>item.questionId===question.id);
+      if(active&&draft)setSelected(draft.selectedAnswers);
+    });
+    return()=>{active=false};
+  },[question,sessionId,userId]);
 
   if (!question) {
     const summary = session.summary;
@@ -163,11 +174,15 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
   }
 
   const multiple = question.question_type === 'multiple_response';
-  const choose = (choiceId: string) => setSelected(current => multiple
-    ? (current.includes(choiceId)
-      ? current.filter(item => item !== choiceId)
-      : current.length < question.required_answer_count ? [...current, choiceId] : current)
-    : (current.includes(choiceId) ? [] : [choiceId]));
+  const choose = (choiceId: string) => setSelected(current => {
+    const next=multiple
+      ? (current.includes(choiceId)
+        ? current.filter(item => item !== choiceId)
+        : current.length < question.required_answer_count ? [...current, choiceId] : current)
+      : (current.includes(choiceId) ? [] : [choiceId]);
+    void saveAnswerDraft({userId,kind:'study',sessionId,questionId:question.id,selectedAnswers:next,currentIndex:session.current_index,pending:true});
+    return next;
+  });
   return <>
     <PageHeader
       eyebrow="집중 학습"
