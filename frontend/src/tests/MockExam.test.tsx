@@ -113,6 +113,11 @@ describe('mobile exam regression styles', () => {
     expect(compact).toContain('.study-question-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))');
     expect(compact).toContain('.study-question-actionsbutton{min-width:0;padding:10px4px;font-size:12px;white-space:nowrap}');
   });
+
+  it('uses the green answer style only for actual selected state, not pointer hover', () => {
+    expect(compact).toContain('.choice.selected{border-color:var(--green);background:#eaf7f1}');
+    expect(compact).toContain('.choice:not(.selected):not(.correct):not(.incorrect):hover{border-color:var(--line);background:var(--card)}');
+  });
 });
 
 describe('MockExamSession', () => {
@@ -160,8 +165,10 @@ describe('MockExamSession', () => {
     const first = await screen.findByRole('radio', { name: /첫 답안/ });
     const second = screen.getByRole('radio', { name: /둘째 답안/ });
     await user.click(first);
+    expect(first.closest('label')).toHaveClass('selected');
     await user.click(first);
     expect(first).not.toBeChecked();
+    expect(first.closest('label')).not.toHaveClass('selected');
     await user.click(first);
     await user.click(second);
     expect(first).not.toBeChecked();

@@ -60,8 +60,10 @@ describe('Study', () => {
     const answer = await screen.findByRole('radio', { name: /사용자 선택/ });
     await user.click(answer);
     expect(answer).toBeChecked();
+    expect(answer.closest('label')).toHaveClass('selected');
     await user.click(answer);
     expect(answer).not.toBeChecked();
+    expect(answer.closest('label')).not.toHaveClass('selected');
     expect(screen.getByRole('button', { name: '정답 확인' })).toBeDisabled();
   });
 
