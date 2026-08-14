@@ -1,5 +1,5 @@
 /* global self, caches, URL, fetch, Response */
-const CACHE_NAME = 'certexam-shell-v1';
+const CACHE_NAME = 'hapgyeokbiseo-shell-v2';
 
 self.addEventListener('install', event => {
   event.waitUntil(self.skipWaiting());

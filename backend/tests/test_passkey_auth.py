@@ -53,7 +53,7 @@ def test_managed_user_must_register_then_authenticate_with_one_passkey(monkeypat
         database_password="",
         frontend_origin="https://exam.example.com",
         passkey_rp_id="exam.example.com",
-        passkey_rp_name="CertExam",
+        passkey_rp_name="합격비서",
     )
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings
@@ -85,7 +85,7 @@ def test_managed_user_must_register_then_authenticate_with_one_passkey(monkeypat
 
             options = client.post("/api/v1/auth/passkeys/registration/options")
             assert options.status_code == 200
-            assert options.json()["rp"]["name"] == "CertExam"
+            assert options.json()["rp"]["name"] == "합격비서"
             monkeypatch.setattr(
                 "app.services.passkeys.verify_registration",
                 lambda **_: (_ for _ in ()).throw(ValueError("invalid attestation")),

@@ -1,6 +1,6 @@
 {
-  "name": "CertExam",
-  "short_name": "CertExam",
+  "name": "합격비서",
+  "short_name": "합격비서",
   "description": "자격증 문제 학습과 실전 모의고사를 위한 앱",
   "start_url": "/",
   "scope": "/",

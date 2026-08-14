@@ -1,8 +1,8 @@
-# CertExam
+# 합격비서
 
 ## 프로젝트 한눈에 보기
 
-CertExam은 자격증 문제를 반복 학습하고 실전 모의고사를 치를 수 있는 개인용 웹 문제은행입니다. 현재 1차 지원 범위는 **AWS Certified Data Engineer - Associate(DEA-C01)**이며, 문제·선택지·정답 이력을 데이터베이스에 보존하고 채점과 합격 판정은 백엔드가 담당합니다.
+합격비서는 자격증 문제를 반복 학습하고 실전 모의고사를 치를 수 있는 개인용 웹 문제은행입니다. 현재 1차 지원 범위는 **AWS Certified Data Engineer - Associate(DEA-C01)**이며, 문제·선택지·정답 이력을 데이터베이스에 보존하고 채점과 합격 판정은 백엔드가 담당합니다.
 
 사용자는 다음 흐름으로 앱을 사용합니다.
 
@@ -169,7 +169,7 @@ INITIAL_ADMIN_PASSWORD=충분히-긴-초기-비밀번호
 AUTH_SESSION_MINUTES=30
 AUTH_COOKIE_SECURE=false
 PASSKEY_RP_ID=localhost
-PASSKEY_RP_NAME=CertExam
+PASSKEY_RP_NAME=합격비서
 PASSKEY_CHALLENGE_MINUTES=5
 AUTH_RATE_LIMIT_REQUESTS=10
 AUTH_RATE_LIMIT_WINDOW_SECONDS=60
@@ -189,7 +189,7 @@ admin은 항상 활성화되는 시스템 계정이므로 `관리 → 계정 관
 FRONTEND_ORIGIN=https://exam.example.com
 AUTH_COOKIE_SECURE=true
 PASSKEY_RP_ID=exam.example.com
-PASSKEY_RP_NAME=CertExam
+PASSKEY_RP_NAME=합격비서
 ```
 
 PWA는 Chrome 주소창의 설치 아이콘 또는 브라우저 메뉴의 `앱 설치`로 설치합니다. 서비스 워커는 화면 셸과 정적 자산만 캐시하며 `/api/*` 요청과 인증·문제 데이터는 캐시하지 않습니다. localhost 이외 환경에서는 HTTPS가 필요합니다.

@@ -4,7 +4,7 @@ from app.services import passkeys
 
 def test_passkey_service_derives_local_rp_and_verifies_both_ceremonies(monkeypatch) -> None:
     settings = Settings(
-        frontend_origin="http://localhost:5173/", passkey_rp_id="", passkey_rp_name="CertExam"
+        frontend_origin="http://localhost:5173/", passkey_rp_id="", passkey_rp_name="합격비서"
     )
     assert passkeys.relying_party_id(settings) == "localhost"
     assert passkeys.expected_origin(settings) == "http://localhost:5173"

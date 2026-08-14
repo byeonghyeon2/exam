@@ -4,16 +4,16 @@ import { describe, expect, it } from 'vitest';
 
 const root = resolve(__dirname, '../..');
 
-describe('CertExam installable PWA', () => {
-  it('uses the CertExam name in the document and web manifest', () => {
+describe('합격비서 installable PWA', () => {
+  it('uses the 합격비서 name in the document and web manifest', () => {
     const html = readFileSync(resolve(root, 'index.html'), 'utf8');
     const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.webmanifest'), 'utf8'));
-    expect(html).toContain('<title>CertExam</title>');
+    expect(html).toContain('<title>합격비서</title>');
     expect(html).toContain('rel="manifest"');
     expect(html).toContain('rel="icon" href="/icons/hapgyeokbiseo-favicon-64.png"');
     expect(html).toContain('rel="apple-touch-icon" href="/icons/hapgyeokbiseo-192.png"');
-    expect(manifest.name).toBe('CertExam');
-    expect(manifest.short_name).toBe('CertExam');
+    expect(manifest.name).toBe('합격비서');
+    expect(manifest.short_name).toBe('합격비서');
     expect(manifest.display).toBe('standalone');
     expect(manifest.icons).toEqual(expect.arrayContaining([
       expect.objectContaining({ src: '/icons/hapgyeokbiseo-192.png', sizes: '192x192' }),
