@@ -10,12 +10,14 @@ describe('CertExam installable PWA', () => {
     const manifest = JSON.parse(readFileSync(resolve(root, 'public/manifest.webmanifest'), 'utf8'));
     expect(html).toContain('<title>CertExam</title>');
     expect(html).toContain('rel="manifest"');
+    expect(html).toContain('rel="icon" href="/icons/hapgyeokbiseo-favicon-64.png"');
+    expect(html).toContain('rel="apple-touch-icon" href="/icons/hapgyeokbiseo-192.png"');
     expect(manifest.name).toBe('CertExam');
     expect(manifest.short_name).toBe('CertExam');
     expect(manifest.display).toBe('standalone');
     expect(manifest.icons).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sizes: '192x192' }),
-      expect.objectContaining({ sizes: '512x512' }),
+      expect.objectContaining({ src: '/icons/hapgyeokbiseo-192.png', sizes: '192x192' }),
+      expect.objectContaining({ src: '/icons/hapgyeokbiseo-512.png', sizes: '512x512' }),
     ]));
   });
 
@@ -28,8 +30,8 @@ describe('CertExam installable PWA', () => {
   });
 
   it('ships correctly sized icons generated from the supplied artwork', () => {
-    for (const size of [192, 512]) {
-      const png = readFileSync(resolve(root, `public/icons/certexam-${size}.png`));
+    for (const [name, size] of [['hapgyeokbiseo-favicon-64.png', 64], ['hapgyeokbiseo-192.png', 192], ['hapgyeokbiseo-main-192.png', 192], ['hapgyeokbiseo-512.png', 512]] as const) {
+      const png = readFileSync(resolve(root, `public/icons/${name}`));
       expect(png.readUInt32BE(16)).toBe(size);
       expect(png.readUInt32BE(20)).toBe(size);
     }

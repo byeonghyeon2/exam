@@ -18,7 +18,7 @@ describe('App',()=>{
     expect(await screen.findByRole('navigation',{name:'주 메뉴'})).toBeInTheDocument();
     expect(screen.getAllByText('합격비서')).toHaveLength(2);
     expect(screen.getAllByText('자격증 합격 비서')).toHaveLength(2);
-    expect(screen.getAllByRole('img',{name:'합격비서 아이콘'})[0]).toHaveAttribute('src','/icons/certexam-192.png');
+    expect(screen.getAllByRole('img',{name:'합격비서 아이콘'})[0]).toHaveAttribute('src','/icons/hapgyeokbiseo-main-192.png');
     expect(screen.getAllByRole('button',{name:'다크 모드'})).toHaveLength(2);
     expect(screen.getAllByRole('button',{name:'로그아웃'})).toHaveLength(2);
     expect(screen.getByRole('heading',{name:/합격까지/})).toBeInTheDocument();
