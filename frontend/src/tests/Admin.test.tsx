@@ -51,9 +51,12 @@ describe('Admin mobile layout', () => {
     expect(screen.getByText('사용 중').closest('td')).toHaveAttribute('data-label', '상태');
     expect(screen.getByText('등록됨').closest('td')).toHaveAttribute('data-label', 'Passkey');
     expect(screen.getByRole('button', { name: '기기 초기화' })).toBeInTheDocument();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     await userEvent.click(screen.getByRole('button', { name: '기기 초기화' }));
+    expect(confirm).toHaveBeenCalledWith('기기를 초기화하시겠습니까?\n등록된 Passkey가 삭제되고 모든 로그인 세션이 종료됩니다.');
     await waitFor(() => expect(endpoints.resetUserPasskey).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('기기 초기화가 완료되었습니다.'));
     expect(screen.getByText('미분류 문제가 없습니다.')).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '상태/신뢰도' })).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '사용 가능' })).toBeInTheDocument();
@@ -61,6 +64,23 @@ describe('Admin mobile layout', () => {
     expect(reports.getByRole('columnheader', { name: '접수 시각' })).toHaveClass('report-time');
     expect(reports.getByRole('columnheader', { name: '유형' })).toHaveClass('report-type');
     expect(reports.queryByRole('columnheader', { name: '상태' })).not.toBeInTheDocument();
+  });
+
+  it('does not reset without confirmation and alerts when reset fails', async () => {
+    mockAdminData();
+    renderAdmin();
+    await screen.findByText('user');
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    await userEvent.click(screen.getByRole('button', { name: '기기 초기화' }));
+    expect(confirm).toHaveBeenCalled();
+    expect(endpoints.resetUserPasskey).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    vi.mocked(endpoints.resetUserPasskey).mockRejectedValueOnce(new Error('서버 오류'));
+    await userEvent.click(screen.getByRole('button', { name: '기기 초기화' }));
+    await waitFor(() => expect(alert).toHaveBeenCalledWith('기기 초기화에 실패했습니다. 다시 시도해주세요.'));
   });
 
   it('keeps admin responsive rules scoped to the admin page', () => {
