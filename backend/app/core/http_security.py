@@ -14,6 +14,10 @@ PROTECTED_DATA_PREFIXES = (
     "/api/v1/questions/",
     "/api/v1/wrong-notes",
 )
+AUTHENTICATION_PREFIXES = (
+    "/api/v1/auth/login",
+    "/api/v1/auth/passkeys/",
+)
 
 
 class FixedWindowRateLimiter:
@@ -41,6 +45,10 @@ class FixedWindowRateLimiter:
 
 def is_problem_data_request(request: Request) -> bool:
     return request.url.path.startswith(PROTECTED_DATA_PREFIXES)
+
+
+def is_authentication_request(request: Request) -> bool:
+    return request.url.path.startswith(AUTHENTICATION_PREFIXES)
 
 
 def _is_trusted_proxy(host: str, trusted_proxies: str) -> bool:

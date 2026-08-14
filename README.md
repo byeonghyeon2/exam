@@ -1,8 +1,8 @@
-# Certification Exam App
+# CertExam
 
 ## 프로젝트 한눈에 보기
 
-Certification Exam App은 자격증 문제를 반복 학습하고 실전 모의고사를 치를 수 있는 개인용 웹 문제은행입니다. 현재 1차 지원 범위는 **AWS Certified Data Engineer - Associate(DEA-C01)**이며, 문제·선택지·정답 이력을 데이터베이스에 보존하고 채점과 합격 판정은 백엔드가 담당합니다.
+CertExam은 자격증 문제를 반복 학습하고 실전 모의고사를 치를 수 있는 개인용 웹 문제은행입니다. 현재 1차 지원 범위는 **AWS Certified Data Engineer - Associate(DEA-C01)**이며, 문제·선택지·정답 이력을 데이터베이스에 보존하고 채점과 합격 판정은 백엔드가 담당합니다.
 
 사용자는 다음 흐름으로 앱을 사용합니다.
 
@@ -22,6 +22,8 @@ Certification Exam App은 자격증 문제를 반복 학습하고 실전 모의�
 - 관리자 문제 수정, 최종 정답 검증, 신고 처리, JSONL 데이터 가져오기
 - 선택적 OpenAI 기반 한국어·영어 해설 생성
 - 760px 이하 화면을 위한 모바일 반응형 UI
+- Chrome에서 홈 화면 앱으로 설치할 수 있는 PWA
+- 일반 계정 최초 Passkey 등록과 계정당 단일 활성 로그인 세션
 
 시스템은 다음과 같이 구성됩니다.
 
@@ -35,7 +37,7 @@ FastAPI 백엔드 ── 선택적 OpenAI API
 
 프론트엔드는 React 18, TypeScript, Vite, TanStack Query로 구성되며 백엔드는 FastAPI, Pydantic, SQLAlchemy, Alembic을 사용합니다. 개발 중에는 SQLite로 빠르게 실행할 수 있고, 여러 기기 또는 상시 서버 환경에서는 MySQL 8을 사용하도록 설계되어 있습니다.
 
-학습 세션, 학습 답안, 모의고사와 오답 노트는 로그인 계정의 `user_id`로 분리됩니다. 일반 사용자와 admin 모두 기본 학습 화면에서는 자신이 푼 기록만 조회·수정할 수 있고, 다른 사용자의 세션이나 모의고사 ID로 직접 접근해도 조회되지 않습니다. PWA 설치와 오프라인 학습은 아직 지원하지 않습니다.
+학습 세션, 학습 답안, 모의고사와 오답 노트는 로그인 계정의 `user_id`로 분리됩니다. 일반 사용자와 admin 모두 기본 학습 화면에서는 자신이 푼 기록만 조회·수정할 수 있고, 다른 사용자의 세션이나 모의고사 ID로 직접 접근해도 조회되지 않습니다. PWA는 설치형 실행 화면을 제공하지만 문제/API/인증 응답은 오프라인 캐시에 저장하지 않습니다.
 
 학습 도중 사이드 메뉴로 이동하면 현재 진행 상황을 처리하는 확인 창이 열립니다. `저장 후 나가기`는 지금까지 답한 문제만 하나의 학습 묶음으로 확정해 오답 노트에 반영하고, `저장하지 않고 나가기`는 학습 묶음을 폐기하며, `계속 학습`은 현재 화면으로 돌아갑니다. 새로고침이나 탭 닫기는 브라우저 기본 이탈 경고로 보호합니다.
 
@@ -164,6 +166,11 @@ INITIAL_ADMIN_USERNAME=admin
 INITIAL_ADMIN_PASSWORD=충분히-긴-초기-비밀번호
 AUTH_SESSION_MINUTES=30
 AUTH_COOKIE_SECURE=false
+PASSKEY_RP_ID=localhost
+PASSKEY_RP_NAME=CertExam
+PASSKEY_CHALLENGE_MINUTES=5
+AUTH_RATE_LIMIT_REQUESTS=10
+AUTH_RATE_LIMIT_WINDOW_SECONDS=60
 ```
 
 최초 admin은 DB에 admin 역할 계정이 하나도 없을 때 첫 로그인 요청에서 생성됩니다. 이후에도 admin 로그인 비밀번호는 DB 해시가 아니라 서버의 `INITIAL_ADMIN_PASSWORD`를 항상 기준으로 사용합니다. 값을 변경한 경우 백엔드 서버를 재시작하면 새 비밀번호가 바로 적용됩니다. `INITIAL_ADMIN_PASSWORD`가 비어 있으면 admin으로 로그인할 수 없습니다.
@@ -171,6 +178,19 @@ AUTH_COOKIE_SECURE=false
 로컬 HTTP 개발에서는 `AUTH_COOKIE_SECURE=false`를 사용합니다. HTTPS로 외부에 배포할 때는 반드시 `AUTH_COOKIE_SECURE=true`로 바꾸십시오. 로그인 세션은 원문 토큰이 아니라 SHA-256 해시로 DB에 저장되고, 브라우저에는 JavaScript로 읽을 수 없는 `HttpOnly` 쿠키로 전달됩니다. 세션 유효시간은 기본 30분이며, 백엔드 프로세스가 시작될 때 기존 활성 세션을 모두 폐기하므로 서버 재시작 후에는 모든 사용자가 로그인 화면부터 다시 시작합니다. 이 동작은 `python -m app.run`과 `uvicorn app.main:app` 실행 모두에 적용됩니다.
 
 admin은 항상 활성화되는 시스템 계정이므로 `관리 → 계정 관리` 목록에 표시되지 않으며 비활성화할 수도 없습니다. 이 화면에서는 일반 학습자 계정만 등록·활성화·비활성화할 수 있고, 일반 계정 비밀번호는 DB의 PBKDF2 해시로 관리합니다.
+
+일반 계정은 임시 비밀번호로 처음 로그인한 뒤 현재 기기의 지문, Face ID, Windows Hello 또는 화면 잠금으로 Passkey를 등록해야 합니다. 등록 완료 전에는 Passkey API와 로그아웃 외의 보호 API가 모두 거절됩니다. 이후 로그인은 비밀번호 확인과 Passkey 인증을 모두 통과해야 하며, 같은 계정으로 새 로그인을 시작하면 기존 활성 세션은 폐기됩니다. 기기를 분실하거나 교체할 때는 admin이 계정 목록의 `기기 초기화`를 실행한 뒤 새 기기에서 다시 등록합니다.
+
+운영 HTTPS 환경에서는 실제 접속 주소에 맞춰 다음처럼 설정합니다. `PASSKEY_RP_ID`에는 스킴이나 포트를 넣지 않습니다.
+
+```dotenv
+FRONTEND_ORIGIN=https://exam.example.com
+AUTH_COOKIE_SECURE=true
+PASSKEY_RP_ID=exam.example.com
+PASSKEY_RP_NAME=CertExam
+```
+
+PWA는 Chrome 주소창의 설치 아이콘 또는 브라우저 메뉴의 `앱 설치`로 설치합니다. 서비스 워커는 화면 셸과 정적 자산만 캐시하며 `/api/*` 요청과 인증·문제 데이터는 캐시하지 않습니다. localhost 이외 환경에서는 HTTPS가 필요합니다.
 
 ## 데이터 검증과 가져오기
 

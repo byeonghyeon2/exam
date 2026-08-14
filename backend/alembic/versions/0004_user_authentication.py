@@ -11,7 +11,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    inspector = sa.inspect(op.get_bind())
+    tables = set(inspector.get_table_names())
+    if "users" not in tables:
+        op.create_table(
         "users",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("username", sa.String(length=64), nullable=False),
@@ -24,11 +27,12 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["created_by_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_users_username"), "users", ["username"], unique=True)
-    op.create_index(op.f("ix_users_role"), "users", ["role"], unique=False)
-    op.create_index(op.f("ix_users_is_active"), "users", ["is_active"], unique=False)
-    op.create_table(
+        )
+        op.create_index(op.f("ix_users_username"), "users", ["username"], unique=True)
+        op.create_index(op.f("ix_users_role"), "users", ["role"], unique=False)
+        op.create_index(op.f("ix_users_is_active"), "users", ["is_active"], unique=False)
+    if "auth_sessions" not in tables:
+        op.create_table(
         "auth_sessions",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -38,11 +42,11 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_auth_sessions_user_id"), "auth_sessions", ["user_id"], unique=False)
-    op.create_index(op.f("ix_auth_sessions_token_hash"), "auth_sessions", ["token_hash"], unique=True)
-    op.create_index(op.f("ix_auth_sessions_expires_at"), "auth_sessions", ["expires_at"], unique=False)
-    op.create_index(op.f("ix_auth_sessions_revoked_at"), "auth_sessions", ["revoked_at"], unique=False)
+        )
+        op.create_index(op.f("ix_auth_sessions_user_id"), "auth_sessions", ["user_id"], unique=False)
+        op.create_index(op.f("ix_auth_sessions_token_hash"), "auth_sessions", ["token_hash"], unique=True)
+        op.create_index(op.f("ix_auth_sessions_expires_at"), "auth_sessions", ["expires_at"], unique=False)
+        op.create_index(op.f("ix_auth_sessions_revoked_at"), "auth_sessions", ["revoked_at"], unique=False)
 
 
 def downgrade() -> None:

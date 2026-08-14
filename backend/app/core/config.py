@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "development"
-    app_name: str = "Certification Exam App"
+    app_name: str = "CertExam"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_debug: bool = False
@@ -35,8 +35,13 @@ class Settings(BaseSettings):
     initial_admin_password: str = ""
     auth_session_minutes: int = Field(30, ge=5, le=1440)
     auth_cookie_secure: bool = False
+    passkey_rp_id: str = ""
+    passkey_rp_name: str = "CertExam"
+    passkey_challenge_minutes: int = Field(5, ge=1, le=15)
     question_rate_limit_requests: int = Field(60, ge=1, le=10000)
     question_rate_limit_window_seconds: int = Field(60, ge=1, le=3600)
+    auth_rate_limit_requests: int = Field(10, ge=1, le=1000)
+    auth_rate_limit_window_seconds: int = Field(60, ge=1, le=3600)
     openai_api_key: str = ""
     openai_model: str = ""
     openai_verification_model: str = ""

@@ -11,7 +11,12 @@ from fastapi.responses import JSONResponse
 from app.api.v1.auth import admin_users, protected, public
 from app.api.v1.router import router
 from app.core.config import Settings, get_settings
-from app.core.http_security import FixedWindowRateLimiter, is_problem_data_request, rate_limit_keys
+from app.core.http_security import (
+    FixedWindowRateLimiter,
+    is_authentication_request,
+    is_problem_data_request,
+    rate_limit_keys,
+)
 from app.services.auth import revoke_active_sessions
 
 logger = logging.getLogger(__name__)
@@ -70,12 +75,18 @@ def create_app(
         settings.question_rate_limit_requests,
         settings.question_rate_limit_window_seconds,
     )
+    auth_limiter = FixedWindowRateLimiter(
+        settings.auth_rate_limit_requests,
+        settings.auth_rate_limit_window_seconds,
+    )
 
     @application.middleware("http")
     async def protect_problem_data(request: Request, call_next):
-        if is_problem_data_request(request):
+        active_limiter = auth_limiter if is_authentication_request(request) else limiter
+        rate_prefix = "auth:" if is_authentication_request(request) else "data:"
+        if is_problem_data_request(request) or is_authentication_request(request):
             for key in rate_limit_keys(request, settings.proxy_trusted_ips):
-                allowed, retry_after = limiter.consume(key)
+                allowed, retry_after = active_limiter.consume(f"{rate_prefix}{key}")
                 if not allowed:
                     return secure_api_response(request, JSONResponse(
                         status_code=429,

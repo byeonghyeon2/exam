@@ -42,6 +42,29 @@ def test_session_expires_after_thirty_minutes() -> None:
         assert find_session(db, token) is None
 
 
+def test_creating_a_new_session_revokes_every_previous_session_for_the_user() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    settings = Settings(
+        database_url="sqlite://", database_host="", database_name="",
+        database_user="", database_password="", auth_session_minutes=30,
+    )
+    with factory() as db:
+        user = User(username="single-login", password_hash="hash", role="user")
+        db.add(user); db.flush()
+        first, first_token = create_session(db, user, settings)
+        db.commit()
+        second, second_token = create_session(db, user, settings)
+        db.commit()
+
+        db.refresh(first)
+        assert first.revoked_at is not None
+        assert second.revoked_at is None
+        assert find_session(db, first_token) is None
+        assert find_session(db, second_token) is not None
+
+
 def test_password_validation_rejects_unsupported_and_malformed_hashes() -> None:
     assert verify_password("password", "legacy$310000$salt$digest") is False
     assert verify_password("password", "not-a-password-hash") is False
@@ -101,7 +124,7 @@ def test_application_startup_invalidates_an_existing_browser_session() -> None:
     application.dependency_overrides[get_settings] = lambda: settings
     try:
         with TestClient(application) as client:
-            client.cookies.set("certflow_session", raw_token)
+            client.cookies.set("certexam_session", raw_token)
             assert client.get("/api/v1/auth/me").status_code == 401
     finally:
         application.dependency_overrides.clear()

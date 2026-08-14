@@ -17,8 +17,9 @@ export function shouldBlockShortcut(event: KeyboardEvent): boolean {
   return BLOCKED_CTRL_KEYS.has(key) || (event.shiftKey && BLOCKED_DEVTOOLS_KEYS.has(key));
 }
 
-export function ContentProtection({ children }: { children: ReactNode }) {
+export function ContentProtection({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
   useEffect(() => {
+    if (!enabled) return;
     const prevent = (event: Event) => event.preventDefault();
     const preventPasteOutsideEditor = (event: ClipboardEvent) => {
       if (!isEditable(event.target)) event.preventDefault();
@@ -40,7 +41,7 @@ export function ContentProtection({ children }: { children: ReactNode }) {
       document.removeEventListener('paste', preventPasteOutsideEditor);
       document.removeEventListener('keydown', blockKeyboard, true);
     };
-  }, []);
+  }, [enabled]);
 
-  return <div className="protected-content">{children}</div>;
+  return <div className={enabled ? 'protected-content' : undefined}>{children}</div>;
 }

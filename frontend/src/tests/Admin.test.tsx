@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../api/queries';
 import { Admin } from '../pages/Admin';
@@ -14,8 +15,9 @@ function mockAdminData() {
   vi.spyOn(endpoints, 'adminDashboard').mockResolvedValue({ questions: 295, verified: 295 });
   vi.spyOn(endpoints, 'users').mockResolvedValue([{
     id: 1, username: 'user', role: 'user', is_active: true,
-    password_managed_by_environment: false, created_at: '2026-08-09T00:00:00Z', last_login_at: null,
+    password_managed_by_environment: false, passkey_registered: true, created_at: '2026-08-09T00:00:00Z', last_login_at: null,
   }]);
+  vi.spyOn(endpoints, 'resetUserPasskey').mockResolvedValue();
   vi.spyOn(endpoints, 'adminReports').mockResolvedValue([{
     id: 7, question_id: 149, question_uid: 'AWS-DEA-C01-000149',
     question_ko: '긴 문제 내용', question_en: 'Long question', report_type: 'explanation_error',
@@ -47,6 +49,11 @@ describe('Admin mobile layout', () => {
     const user = await screen.findByText('user');
     expect(user.closest('td')).toHaveAttribute('data-label', '아이디');
     expect(screen.getByText('사용 중').closest('td')).toHaveAttribute('data-label', '상태');
+    expect(screen.getByText('등록됨').closest('td')).toHaveAttribute('data-label', 'Passkey');
+    expect(screen.getByRole('button', { name: '기기 초기화' })).toBeInTheDocument();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await userEvent.click(screen.getByRole('button', { name: '기기 초기화' }));
+    await waitFor(() => expect(endpoints.resetUserPasskey).toHaveBeenCalledWith(1));
     expect(screen.getByText('미분류 문제가 없습니다.')).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '상태/신뢰도' })).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '사용 가능' })).toBeInTheDocument();

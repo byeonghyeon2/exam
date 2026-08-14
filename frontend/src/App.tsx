@@ -9,15 +9,18 @@ import { CertificationDetail, Certifications } from './pages/Certifications';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
 import { MockExamSession, MockExamSetup } from './pages/MockExam';
+import { PasskeyGate } from './pages/PasskeyGate';
 import { Results } from './pages/Results';
 import { Study } from './pages/Study';
 import { WrongNotes } from './pages/WrongNotes';
 
 export function App() {
   const me = useQuery({ queryKey: ['me'], queryFn: endpoints.me, retry: false });
-  if (me.isLoading) return <main className="login-page"><Loading /></main>;
-  if (!me.data) return <Routes><Route path="*" element={<Login />} /></Routes>;
-  return <ContentProtection><Routes>
+  let content;
+  if (me.isLoading) content = <main className="login-page"><Loading /></main>;
+  else if (!me.data) content = <Routes><Route path="*" element={<Login />} /></Routes>;
+  else if (me.data.passkey_registration_required || me.data.passkey_authentication_required) content = <PasskeyGate user={me.data} />;
+  else content = <Routes>
     <Route element={<Layout />}>
       <Route index element={<Dashboard />} />
       <Route path="certifications" element={<Certifications />} />
@@ -32,5 +35,6 @@ export function App() {
       <Route path="admin" element={me.data.role === 'admin' ? <Admin /> : <Navigate to="/" replace />} />
       <Route path="*" element={<div className="state"><strong>페이지를 찾을 수 없습니다.</strong><a href="/">대시보드로 이동</a></div>} />
     </Route>
-  </Routes></ContentProtection>;
+  </Routes>;
+  return <ContentProtection enabled={me.data?.role !== 'admin'}>{content}</ContentProtection>;
 }

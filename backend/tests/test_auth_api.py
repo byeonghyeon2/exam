@@ -10,7 +10,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.entities import Certification, Domain, Question, User, WrongNote
-from app.services.auth import hash_password
+from app.services.auth import create_session, hash_password
 
 
 def test_admin_bootstrap_login_and_managed_user_access() -> None:
@@ -44,7 +44,7 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings
     try:
-        with TestClient(app) as client:
+        with TestClient(app, client=("198.51.100.60", 50000)) as client:
             cors = client.options(
                 "/api/v1/certifications",
                 headers={"Origin": "http://192.168.0.10:5173", "Access-Control-Request-Method": "GET"},
@@ -56,7 +56,7 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             assert logged_in.status_code == 200
             assert logged_in.json()["role"] == "admin"
             assert logged_in.json()["password_managed_by_environment"] is True
-            assert logged_in.cookies.get("certflow_session")
+            assert logged_in.cookies.get("certexam_session")
             assert "HttpOnly" in logged_in.headers["set-cookie"]
             assert "SameSite=lax" in logged_in.headers["set-cookie"]
             assert "Secure" not in logged_in.headers["set-cookie"]
@@ -93,11 +93,19 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             learner_login = client.post("/api/v1/auth/login", json={"username": "learner", "password": "learner-password"})
             assert learner_login.status_code == 200
             assert learner_login.json()["password_managed_by_environment"] is False
+            assert learner_login.json()["passkey_registration_required"] is True
+            assert client.get("/api/v1/certifications").status_code == 403
+            with session_factory() as db:
+                learner_user = db.scalar(select(User).where(User.username == "learner"))
+                _session, learner_token = create_session(db, learner_user, settings, purpose="full")
+                db.commit()
+            client.cookies.set("certexam_session", learner_token)
             assert client.get("/api/v1/certifications").status_code == 200
             assert client.get("/api/v1/admin/users").status_code == 403
             assert [note["question_uid"] for note in client.get("/api/v1/wrong-notes").json()] == ["LEARNER-WRONG"]
 
             assert client.post("/api/v1/auth/logout").status_code == 204
+            client.cookies.clear()
             assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "strong-admin-password"}).status_code == 200
             assert [note["question_uid"] for note in client.get("/api/v1/wrong-notes").json()] == ["ADMIN-WRONG"]
             assert client.patch("/api/v1/admin/users/999999", json={"is_active": False}).status_code == 404

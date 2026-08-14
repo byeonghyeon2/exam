@@ -118,6 +118,18 @@ def test_health_and_login_are_not_counted_as_problem_data_requests() -> None:
     app = create_app(settings_for(question_rate_limit_requests=1))
     with TestClient(app) as client:
         assert client.get("/api/v1/health").status_code == 200
+
+
+def test_login_and_passkey_endpoints_have_a_separate_brute_force_limit() -> None:
+    app = create_app(settings_for(auth_rate_limit_requests=1))
+    with TestClient(app, client=("198.51.100.50", 50000)) as client:
+        assert client.post("/api/v1/auth/login", json={}).status_code != 429
+        limited = client.post("/api/v1/auth/login", json={})
+        assert limited.status_code == 429
+        assert int(limited.headers["retry-after"]) >= 1
+
+    with TestClient(app, client=("198.51.100.51", 50000)) as other_client:
+        assert other_client.post("/api/v1/auth/passkeys/registration/options").status_code != 429
         assert client.get("/api/v1/health").status_code == 200
 
 
@@ -129,7 +141,7 @@ def test_rate_limiter_expires_old_events_and_also_fingerprints_session_cookie() 
 
     app = create_app(settings_for(question_rate_limit_requests=2))
     with TestClient(app) as client:
-        client.cookies.set("certflow_session", "opaque-secret-token")
+        client.cookies.set("certexam_session", "opaque-secret-token")
         assert client.get("/api/v1/study/sessions/not-found").status_code != 429
 
 

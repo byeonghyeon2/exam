@@ -28,8 +28,15 @@ class UserOut(ORMModel):
     role: Literal["user", "admin"]
     is_active: bool
     password_managed_by_environment: bool = False
+    passkey_registered: bool = False
+    passkey_registration_required: bool = False
+    passkey_authentication_required: bool = False
     created_at: datetime
     last_login_at: datetime | None
+
+
+class PasskeyCredentialRequest(BaseModel):
+    credential: dict[str, Any]
 
 
 class ChoiceOut(ORMModel):

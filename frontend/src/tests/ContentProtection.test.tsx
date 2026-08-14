@@ -5,6 +5,18 @@ import { ContentProtection } from '../components/ContentProtection';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('ContentProtection', () => {
+  it('keeps protection on for public and learner screens but disables it for admin', () => {
+    const { rerender } = render(<ContentProtection enabled><p>로그인 화면</p></ContentProtection>);
+    const blocked = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    screen.getByText('로그인 화면').dispatchEvent(blocked);
+    expect(blocked.defaultPrevented).toBe(true);
+
+    rerender(<ContentProtection enabled={false}><p>관리자 화면</p></ContentProtection>);
+    const allowed = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    screen.getByText('관리자 화면').dispatchEvent(allowed);
+    expect(allowed.defaultPrevented).toBe(false);
+  });
+
   it('blocks extraction gestures and common source/devtools shortcuts', () => {
     render(<ContentProtection><p>보호할 문제</p></ContentProtection>);
     const content = screen.getByText('보호할 문제');

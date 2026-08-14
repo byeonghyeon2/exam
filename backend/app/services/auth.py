@@ -34,11 +34,19 @@ def verify_password(password: str, encoded: str) -> bool:
         return False
 
 
-def create_session(db: Session, user: User, settings: Settings) -> tuple[AuthSession, str]:
+def create_session(
+    db: Session, user: User, settings: Settings, purpose: str = "full"
+) -> tuple[AuthSession, str]:
+    db.execute(
+        update(AuthSession)
+        .where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
     raw_token = secrets.token_urlsafe(32)
     session = AuthSession(
         user_id=user.id,
         token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+        purpose=purpose,
         expires_at=utcnow() + timedelta(minutes=settings.auth_session_minutes),
     )
     db.add(session)
