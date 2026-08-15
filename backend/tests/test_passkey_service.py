@@ -40,3 +40,15 @@ def test_authentication_uses_discoverable_passkey_selection() -> None:
     assert options["rpId"] == "localhost"
     assert options["userVerification"] == "required"
     assert "allowCredentials" not in options
+
+
+def test_registration_prefers_the_current_devices_platform_authenticator() -> None:
+    settings = Settings(frontend_origin="https://exam.example.com", passkey_rp_id="exam.example.com")
+
+    options = passkeys.registration_options(settings, "learner", 7, b"challenge")
+
+    selection = options["authenticatorSelection"]
+    assert selection["authenticatorAttachment"] == "platform"
+    assert selection["residentKey"] == "required"
+    assert selection["requireResidentKey"] is True
+    assert selection["userVerification"] == "required"

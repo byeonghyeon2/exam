@@ -27,11 +27,19 @@ export function Login() {
   };
 
   return <main className="login-page"><section className="login-card passkey-card">
-    <div className="auth-heading-row"><h1 className="auth-title"><LockKeyhole /><span>로그인</span></h1><CircleAlert className="auth-info-icon" aria-label="로그인 안내" /></div>
-    <div className="auth-guidance muted">
-      <p><span className="auth-guidance-line">관리자가 발급한 계정으로</span><span className="auth-guidance-line">사용 기기를 등록합니다.</span></p>
-      <p><span className="auth-guidance-line">Passkey 정보는 합격비서 사용자 인증과</span><span className="auth-guidance-line">기기 등록에만 사용됩니다.</span></p>
+    <div className="auth-heading-row">
+      <h1 className="auth-title"><LockKeyhole /><span>로그인</span></h1>
+      <button type="button" className="auth-info-trigger" aria-label="로그인 안내" aria-describedby="login-guidance-tooltip">
+        <CircleAlert className="auth-info-icon" />
+        <span id="login-guidance-tooltip" className="auth-guidance-tooltip" role="tooltip">
+          <span className="auth-guidance-line">관리자가 발급한 계정으로</span>
+          <span className="auth-guidance-line">사용 기기를 등록합니다.</span>
+          <span className="auth-guidance-line tooltip-section">Passkey 정보는 합격비서 사용자 인증과</span>
+          <span className="auth-guidance-line">기기 등록에만 사용됩니다.</span>
+        </span>
+      </button>
     </div>
+    <p className="muted login-intro">등록된 기기의 지문, Face ID 또는 화면 잠금으로 로그인하세요.</p>
     {passkey.isError && <p className="form-error" role="alert">{passkeyErrorMessage(passkey.error, false)}</p>}
     <button className="button" disabled={passkey.isPending || registration.isPending} onClick={() => passkey.mutate()}>
       <Fingerprint size={20} />{passkey.isPending ? '인증 확인 중…' : 'Passkey로 로그인'}

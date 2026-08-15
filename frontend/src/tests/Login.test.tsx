@@ -23,10 +23,13 @@ function renderLogin() {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('Passkey-first login', () => {
-  it('shows the device-registration privacy guidance with stable line breaks',async()=>{
+  it('keeps the login page concise and exposes device-registration guidance from the info tooltip',async()=>{
     renderLogin();
-    expect(screen.getByLabelText('로그인 안내')).toBeInTheDocument();
-    expect([...document.querySelectorAll('.auth-guidance-line')].map(item=>item.textContent)).toEqual([
+    expect(screen.getByText('등록된 기기의 지문, Face ID 또는 화면 잠금으로 로그인하세요.')).toBeInTheDocument();
+    const info = screen.getByRole('button', { name: '로그인 안내' });
+    expect(info).toHaveAttribute('aria-describedby', 'login-guidance-tooltip');
+    expect(info).toHaveAttribute('type', 'button');
+    expect([...screen.getByRole('tooltip').querySelectorAll('.auth-guidance-line')].map(item=>item.textContent)).toEqual([
       '관리자가 발급한 계정으로',
       '사용 기기를 등록합니다.',
       'Passkey 정보는 합격비서 사용자 인증과',
