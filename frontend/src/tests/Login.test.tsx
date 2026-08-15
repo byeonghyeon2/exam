@@ -23,6 +23,20 @@ function renderLogin() {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('Passkey-first login', () => {
+  it('shows the device-registration privacy guidance with stable line breaks',async()=>{
+    renderLogin();
+    expect(screen.getByLabelText('로그인 안내')).toBeInTheDocument();
+    expect([...document.querySelectorAll('.auth-guidance-line')].map(item=>item.textContent)).toEqual([
+      '관리자가 발급한 계정으로',
+      '사용 기기를 등록합니다.',
+      'Passkey 정보는 합격비서 사용자 인증과',
+      '기기 등록에만 사용됩니다.',
+    ]);
+    await userEvent.click(screen.getByRole('button',{name:'최초 기기 등록'}));
+    expect(screen.getByText('관리자가 발급한 계정으로 진행하세요.')).toBeInTheDocument();
+    expect(screen.queryByText(/admin 계정/)).not.toBeInTheDocument();
+  });
+
   it('logs in directly with a discoverable Passkey without asking for a password', async () => {
     vi.spyOn(endpoints, 'passkeyAuthenticationOptions').mockResolvedValue({ challenge: 'AA' });
     vi.spyOn(passkeys, 'startPasskeyAuthentication').mockResolvedValue({ id: 'credential' });
