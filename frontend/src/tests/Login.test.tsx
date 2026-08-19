@@ -14,9 +14,9 @@ const authenticated: User = {
   created_at: '2026-08-14T00:00:00Z', last_login_at: '2026-08-14T01:00:00Z',
 };
 
-function renderLogin() {
+function renderLogin(onAuthenticated?: () => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><Login /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><Login onAuthenticated={onAuthenticated} /></QueryClientProvider>);
   return client;
 }
 
@@ -44,7 +44,8 @@ describe('Passkey-first login', () => {
     vi.spyOn(endpoints, 'passkeyAuthenticationOptions').mockResolvedValue({ challenge: 'AA' });
     vi.spyOn(passkeys, 'startPasskeyAuthentication').mockResolvedValue({ id: 'credential' });
     vi.spyOn(endpoints, 'verifyPasskeyAuthentication').mockResolvedValue(authenticated);
-    const client = renderLogin();
+    const onAuthenticated = vi.fn();
+    const client = renderLogin(onAuthenticated);
 
     expect(screen.queryByLabelText('아이디')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Passkey로 로그인' }));
@@ -52,6 +53,7 @@ describe('Passkey-first login', () => {
     expect(endpoints.passkeyAuthenticationOptions).toHaveBeenCalled();
     expect(endpoints.verifyPasskeyAuthentication).toHaveBeenCalledWith({ id: 'credential' });
     await waitFor(() => expect(client.getQueryData(['me'])).toEqual(authenticated));
+    expect(onAuthenticated).toHaveBeenCalledTimes(1);
   });
 
   it('uses the administrator-issued credentials only for initial device registration', async () => {

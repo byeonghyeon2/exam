@@ -3,8 +3,9 @@ import hashlib
 import hmac
 import secrets
 from datetime import timedelta
+from math import ceil
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -13,6 +14,15 @@ from app.models.entities import AuthSession, User
 
 PASSWORD_ALGORITHM = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 310_000
+
+
+def cleanup_stale_sessions(db: Session) -> int:
+    result = db.execute(
+        delete(AuthSession).where(
+            (AuthSession.revoked_at.is_not(None)) | (AuthSession.expires_at <= utcnow())
+        )
+    )
+    return int(result.rowcount or 0)
 
 
 def hash_password(password: str) -> str:
@@ -41,6 +51,7 @@ def create_session(
     purpose: str = "full",
     revoke_existing: bool = True,
 ) -> tuple[AuthSession, str]:
+    cleanup_stale_sessions(db)
     if revoke_existing:
         db.execute(
             update(AuthSession)
@@ -56,6 +67,19 @@ def create_session(
     )
     db.add(session)
     return session, raw_token
+
+
+def refresh_session(
+    db: Session,
+    session: AuthSession,
+    settings: Settings,
+    idle_seconds: int,
+) -> int:
+    now = utcnow()
+    idle = min(max(idle_seconds, 0), settings.auth_session_minutes * 60)
+    session.expires_at = now + timedelta(minutes=settings.auth_session_minutes, seconds=-idle)
+    db.flush()
+    return max(1, ceil((session.expires_at - now).total_seconds()))
 
 
 def find_session(db: Session, raw_token: str) -> tuple[AuthSession, User] | None:
@@ -79,6 +103,7 @@ def revoke_active_sessions() -> int:
 
     revoked_at = utcnow()
     with SessionLocal() as db:
+        cleanup_stale_sessions(db)
         result = db.execute(
             update(AuthSession)
             .where(AuthSession.revoked_at.is_(None))

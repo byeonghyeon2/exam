@@ -5,6 +5,7 @@ import type {ReportType} from '../reporting';
 export const endpoints={
   login:(username:string,password:string)=>api<User>('/auth/login',{method:'POST',body:JSON.stringify({username,password})}),
   logout:()=>api<void>('/auth/logout',{method:'POST'}),me:()=>api<User>('/auth/me'),
+  sessionActivity:(idleSeconds:number)=>api<void>('/auth/session/activity',{method:'POST',keepalive:true,body:JSON.stringify({idle_seconds:idleSeconds})}),
   passkeyRegistrationOptions:()=>api<Record<string,unknown>>('/auth/passkeys/registration/options',{method:'POST'}),
   verifyPasskeyRegistration:(credential:Record<string,unknown>)=>api<User>('/auth/passkeys/registration/verify',{method:'POST',body:JSON.stringify({credential})}),
   passkeyAuthenticationOptions:()=>api<Record<string,unknown>>('/auth/passkeys/authentication/options',{method:'POST'}),

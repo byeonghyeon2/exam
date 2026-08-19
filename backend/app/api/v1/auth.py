@@ -23,13 +23,21 @@ from app.models.entities import (
     User,
     WrongNote,
 )
-from app.schemas.api import LoginRequest, PasskeyCredentialRequest, UserCreate, UserOut, UserUpdate
+from app.schemas.api import (
+    LoginRequest,
+    PasskeyCredentialRequest,
+    SessionActivityRequest,
+    UserCreate,
+    UserOut,
+    UserUpdate,
+)
 from app.services import passkeys
 from app.services.auth import (
     bootstrap_admin,
     create_session,
     find_session,
     hash_password,
+    refresh_session,
     verify_password,
 )
 
@@ -90,11 +98,16 @@ def user_response(db: Session, user: User, session: AuthSession, settings: Setti
     )
 
 
-def set_session_cookie(response: Response, raw_token: str, settings: Settings) -> None:
+def set_session_cookie(
+    response: Response,
+    raw_token: str,
+    settings: Settings,
+    max_age_seconds: int | None = None,
+) -> None:
     response.set_cookie(
         SESSION_COOKIE,
         raw_token,
-        max_age=settings.auth_session_minutes * 60,
+        max_age=max_age_seconds or settings.auth_session_minutes * 60,
         httponly=True,
         secure=settings.auth_cookie_secure,
         samesite="lax",
@@ -295,6 +308,27 @@ def logout(
     response.delete_cookie(
         SESSION_COOKIE, path="/", secure=settings.auth_cookie_secure, httponly=True, samesite="lax"
     )
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@public.post("/auth/session/activity", status_code=204)
+def session_activity(
+    payload: SessionActivityRequest,
+    response: Response,
+    identity: Annotated[tuple[AuthSession, User] | None, Depends(session_identity)],
+    db: Db,
+    settings: AppSettings,
+    session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> Response:
+    if identity is None or session_token is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "로그인이 필요합니다")
+    session, _user = identity
+    if session.purpose != "full":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Passkey 인증을 완료해야 합니다")
+    max_age = refresh_session(db, session, settings, payload.idle_seconds)
+    db.commit()
+    set_session_cookie(response, session_token, settings, max_age_seconds=max_age)
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 

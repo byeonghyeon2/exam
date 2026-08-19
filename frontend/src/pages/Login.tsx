@@ -4,7 +4,7 @@ import { type FormEvent, useState } from 'react';
 import { endpoints } from '../api/queries';
 import { passkeyErrorMessage, startPasskeyAuthentication } from '../auth/passkeys';
 
-export function Login() {
+export function Login({ onAuthenticated }: { onAuthenticated?: () => void }) {
   const client = useQueryClient();
   const [showRegistration, setShowRegistration] = useState(false);
   const [username, setUsername] = useState('');
@@ -15,11 +15,11 @@ export function Login() {
       const credential = await startPasskeyAuthentication(options);
       return endpoints.verifyPasskeyAuthentication(credential);
     },
-    onSuccess: user => client.setQueryData(['me'], user),
+    onSuccess: user => { client.setQueryData(['me'], user); onAuthenticated?.(); },
   });
   const registration = useMutation({
     mutationFn: () => endpoints.login(username, password),
-    onSuccess: user => client.setQueryData(['me'], user),
+    onSuccess: user => { client.setQueryData(['me'], user); onAuthenticated?.(); },
   });
   const submitRegistration = (event: FormEvent) => {
     event.preventDefault();

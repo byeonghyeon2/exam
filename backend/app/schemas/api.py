@@ -13,6 +13,10 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+class SessionActivityRequest(BaseModel):
+    idle_seconds: int = Field(ge=0, le=1800)
+
+
 class UserCreate(LoginRequest):
     role: Literal["user", "admin"] = "user"
 

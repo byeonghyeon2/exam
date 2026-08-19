@@ -1,9 +1,10 @@
 import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
-import {cleanup,render,screen} from '@testing-library/react';
+import {act,cleanup,render,screen} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {App} from '../App';
+import {SESSION_EXPIRED_EVENT} from '../components/SessionActivity';
 
 const admin={id:1,username:'admin',role:'admin',is_active:true,passkey_registered:false,passkey_registration_required:false,passkey_authentication_required:false,created_at:'2026-01-01T00:00:00Z',last_login_at:null};
 const learner={...admin,id:2,username:'learner',role:'user'};
@@ -77,5 +78,19 @@ describe('App',()=>{
     const loginContextMenu=new MouseEvent('contextmenu',{bubbles:true,cancelable:true});
     document.dispatchEvent(loginContextMenu);
     expect(loginContextMenu.defaultPrevented).toBe(true);
+  });
+
+  it('moves to login and explains when the inactivity session expires',async()=>{
+    vi.stubGlobal('fetch',vi.fn((input:string|URL)=>String(input).includes('/auth/me')?Promise.resolve(response(learner)):new Promise(()=>{})));
+    renderApp();
+    await screen.findByRole('navigation',{name:'주 메뉴'});
+
+    act(()=>window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT)));
+
+    expect(screen.getByRole('heading',{name:'로그인'})).toBeInTheDocument();
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('세션이 만료되었습니다');
+    await userEvent.click(screen.getByRole('button',{name:'확인'}));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading',{name:'로그인'})).toBeInTheDocument();
   });
 });
