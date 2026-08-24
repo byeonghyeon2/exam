@@ -7,11 +7,8 @@ import { passkeyErrorMessage, startPasskeyAuthentication } from '../auth/passkey
 export function Login({ onAuthenticated }: { onAuthenticated?: () => void }) {
   const client = useQueryClient();
   const [showRegistration, setShowRegistration] = useState(false);
-  const [showRecovery, setShowRecovery] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [recoveryUsername, setRecoveryUsername] = useState('admin');
-  const [recoveryKey, setRecoveryKey] = useState('');
   const passkey = useMutation({
     mutationFn: async () => {
       const options = await endpoints.passkeyAuthenticationOptions();
@@ -23,10 +20,6 @@ export function Login({ onAuthenticated }: { onAuthenticated?: () => void }) {
   const registration = useMutation({
     mutationFn: () => endpoints.login(username, password),
     onSuccess: user => { client.setQueryData(['me'], user); onAuthenticated?.(); },
-  });
-  const recovery = useMutation({
-    mutationFn: () => endpoints.recoverAdminPasskey(recoveryUsername, recoveryKey),
-    onSuccess: () => { setRecoveryKey(''); setShowRecovery(false); setShowRegistration(true); },
   });
   const submitRegistration = (event: FormEvent) => {
     event.preventDefault();
@@ -61,13 +54,29 @@ export function Login({ onAuthenticated }: { onAuthenticated?: () => void }) {
       {registration.isError && <p className="form-error" role="alert">{registration.error.message}</p>}
       <button className="button" disabled={registration.isPending}>{registration.isPending ? '확인 중…' : '기기 등록 계속'}</button>
     </form>}
-    <button className="passkey-logout admin-recovery-toggle" disabled={passkey.isPending || registration.isPending || recovery.isPending} onClick={() => setShowRecovery(value => !value)}>관리자 기기 복구</button>
-    {showRecovery && <form onSubmit={event => { event.preventDefault(); recovery.mutate(); }}>
-      <p className="muted">복구는 관리자 Passkey와 로그인 세션만 초기화합니다. 완료 후 관리자 비밀번호로 기기를 다시 등록하세요.</p>
-      <label>관리자 아이디<input value={recoveryUsername} onChange={event => setRecoveryUsername(event.target.value)} autoComplete="username" required minLength={3}/></label>
-      <label>복구 키<input type="password" value={recoveryKey} onChange={event => setRecoveryKey(event.target.value)} autoComplete="off" required minLength={32}/></label>
-      {recovery.isError && <p className="form-error" role="alert">관리자 기기 복구에 실패했습니다.</p>}
+  </section></main>;
+}
+
+export function AdminReset() {
+  const [username,setUsername]=useState('admin');
+  const [recoveryKey,setRecoveryKey]=useState('');
+  const recovery=useMutation({
+    mutationFn:()=>endpoints.recoverAdminPasskey(username,recoveryKey),
+    onSuccess:()=>setRecoveryKey(''),
+  });
+  if(recovery.isSuccess)return <main className="login-page"><section className="login-card passkey-card">
+    <div className="auth-heading-row"><h1 className="auth-title"><LockKeyhole/><span>관리자 기기 복구</span></h1></div>
+    <div className="state" role="status"><strong>관리자 기기 인증 정보가 초기화되었습니다</strong><span>로그인 화면에서 관리자 비밀번호로 새 Passkey를 등록하세요.</span><a className="button" href="/login">로그인 화면으로 이동</a></div>
+  </section></main>;
+  return <main className="login-page"><section className="login-card passkey-card">
+    <div className="auth-heading-row"><h1 className="auth-title"><LockKeyhole/><span>관리자 기기 복구</span></h1></div>
+    <p className="muted">관리자 Passkey와 활성 로그인 세션만 초기화합니다. 계정과 학습 데이터는 삭제되지 않습니다.</p>
+    <form onSubmit={event=>{event.preventDefault();recovery.mutate()}}>
+      <label>관리자 아이디<input value={username} onChange={event=>setUsername(event.target.value)} autoComplete="username" required minLength={3}/></label>
+      <label>복구 키<input type="password" value={recoveryKey} onChange={event=>setRecoveryKey(event.target.value)} autoComplete="off" required minLength={32}/></label>
+      {recovery.isError&&<p className="form-error" role="alert">관리자 기기 복구에 실패했습니다.</p>}
       <button className="button danger-button" disabled={recovery.isPending}>{recovery.isPending?'초기화 중…':'관리자 기기 초기화'}</button>
-    </form>}
+    </form>
+    <a className="passkey-logout" href="/login">로그인 화면으로 돌아가기</a>
   </section></main>;
 }

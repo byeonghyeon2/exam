@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { endpoints } from '../api/queries';
 import * as passkeys from '../auth/passkeys';
-import { Login } from '../pages/Login';
+import { AdminReset, Login } from '../pages/Login';
 import type { User } from '../types';
 
 const authenticated: User = {
@@ -18,6 +18,11 @@ function renderLogin(onAuthenticated?: () => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><Login onAuthenticated={onAuthenticated} /></QueryClientProvider>);
   return client;
+}
+
+function renderAdminReset() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><AdminReset /></QueryClientProvider>);
 }
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -38,6 +43,8 @@ describe('Passkey-first login', () => {
     await userEvent.click(screen.getByRole('button',{name:'최초 기기 등록'}));
     expect(screen.getByText('관리자가 발급한 계정으로 진행하세요.')).toBeInTheDocument();
     expect(screen.queryByText(/admin 계정/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'관리자 기기 복구'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'관리자 기기 초기화'})).not.toBeInTheDocument();
   });
 
   it('logs in directly with a discoverable Passkey without asking for a password', async () => {
@@ -118,22 +125,21 @@ describe('Passkey-first login', () => {
 
   it('resets only the administrator device with the offline recovery key',async()=>{
     const recover=vi.spyOn(endpoints,'recoverAdminPasskey').mockResolvedValue();
-    renderLogin();
-    await userEvent.click(screen.getByRole('button',{name:'관리자 기기 복구'}));
+    renderAdminReset();
     await userEvent.clear(screen.getByLabelText('관리자 아이디'));
     await userEvent.type(screen.getByLabelText('관리자 아이디'),'admin');
     const key='a'.repeat(32);
     await userEvent.type(screen.getByLabelText('복구 키'),key);
     await userEvent.click(screen.getByRole('button',{name:'관리자 기기 초기화'}));
     await waitFor(()=>expect(recover).toHaveBeenCalledWith('admin',key));
-    expect(screen.getByLabelText('임시 비밀번호')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('관리자 기기 인증 정보가 초기화되었습니다');
+    expect(screen.getByRole('link',{name:'로그인 화면으로 이동'})).toHaveAttribute('href','/login');
   });
 
   it('blocks duplicate recovery submission and shows a stable recovery error',async()=>{
     let rejectRecovery!:(reason:Error)=>void;
     vi.spyOn(endpoints,'recoverAdminPasskey').mockImplementation(()=>new Promise((_resolve,reject)=>{rejectRecovery=reject}));
-    renderLogin();
-    await userEvent.click(screen.getByRole('button',{name:'관리자 기기 복구'}));
+    renderAdminReset();
     await userEvent.type(screen.getByLabelText('복구 키'),'a'.repeat(32));
     await userEvent.click(screen.getByRole('button',{name:'관리자 기기 초기화'}));
     expect(screen.getByRole('button',{name:'초기화 중…'})).toBeDisabled();

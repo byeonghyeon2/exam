@@ -48,6 +48,19 @@ describe('App',()=>{
     expect(screen.getByLabelText('임시 비밀번호')).toHaveAttribute('type','password');
   });
 
+  it('exposes administrator device recovery only on the dedicated reset URL',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({detail:'로그인이 필요합니다'},false,401)));
+    const login=renderApp('/login');
+    expect(await screen.findByRole('heading',{name:'로그인'})).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'관리자 기기 초기화'})).not.toBeInTheDocument();
+    login.unmount();
+
+    renderApp('/admin/reset');
+    expect(await screen.findByRole('heading',{name:'관리자 기기 복구'})).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'관리자 기기 초기화'})).toBeInTheDocument();
+    expect(screen.queryByRole('heading',{name:'로그인'})).not.toBeInTheDocument();
+  });
+
   it('keeps authentication errors distinct from temporary server outages',async()=>{
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({detail:'DB 연결 실패'},false,503)));
     renderApp('/mock-exam/7');

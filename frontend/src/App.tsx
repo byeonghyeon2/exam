@@ -11,7 +11,7 @@ import { SESSION_EXPIRED_EVENT, SessionActivity } from './components/SessionActi
 import { Admin, AdminNotices, AdminQuestions, AdminUsers } from './pages/Admin';
 import { CertificationDetail, Certifications } from './pages/Certifications';
 import { Dashboard } from './pages/Dashboard';
-import { Login } from './pages/Login';
+import { AdminReset, Login } from './pages/Login';
 import { MockExamSession, MockExamSetup } from './pages/MockExam';
 import { PasskeyGate } from './pages/PasskeyGate';
 import { Results } from './pages/Results';
@@ -54,13 +54,14 @@ export function App() {
   },[maintenance,me.data?.role,queryClient]);
   let content;
   if(maintenance&&me.data?.role!=='admin'&&!adminLoginMode)content=<MaintenanceScreen notice={maintenance} onAdminLogin={()=>setAdminLoginMode(true)}/>;
-  else if(maintenance&&adminLoginMode&&me.data?.role!=='admin')content=<Routes><Route path="*" element={<Login onAuthenticated={()=>setAdminLoginMode(false)}/>} /></Routes>;
-  else if (sessionExpired) content = <Routes><Route path="*" element={<Login onAuthenticated={() => { setSessionExpired(false); setShowExpirationNotice(false); }} />} /></Routes>;
+  else if(maintenance&&adminLoginMode&&me.data?.role!=='admin')content=<Routes><Route path="admin/reset" element={<AdminReset/>}/><Route path="*" element={<Login onAuthenticated={()=>setAdminLoginMode(false)}/>} /></Routes>;
+  else if (sessionExpired) content = <Routes><Route path="admin/reset" element={<AdminReset/>}/><Route path="*" element={<Login onAuthenticated={() => { setSessionExpired(false); setShowExpirationNotice(false); }} />} /></Routes>;
   else if (me.isLoading) content = <main className="login-page"><Loading /></main>;
-  else if (unauthenticated) content = <Routes><Route path="*" element={<Login />} /></Routes>;
+  else if (unauthenticated) content = <Routes><Route path="admin/reset" element={<AdminReset/>}/><Route path="*" element={<Login />} /></Routes>;
   else if (!me.data) content = <main className="login-page"><div className="state error" role="alert"><strong>서버 연결이 일시적으로 끊겼습니다</strong><span>현재 화면과 임시 답안을 유지한 채 자동으로 다시 연결합니다.</span><button onClick={() => void me.refetch()}>다시 연결</button></div></main>;
   else if (me.data.passkey_registration_required || me.data.passkey_authentication_required) content = <PasskeyGate user={me.data} />;
   else content = <Routes>
+    <Route path="admin/reset" element={<AdminReset/>}/>
     <Route element={<Layout />}>
       <Route index element={<Dashboard />} />
       <Route path="certifications" element={<Certifications />} />
