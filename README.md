@@ -15,7 +15,7 @@
 주요 기능:
 
 - 자격증 및 시험 영역별 문제 조회
-- 무작위 학습, 영역 전체 학습, 단일·복수 선택 즉시 채점
+- 계정별 미풀이 문항을 우선하는 무작위 학습, 영역 전체 학습, 단일·복수 선택 즉시 채점
 - 시간 제한 모의고사, 답안 임시 저장, 검토 표시, 자동 제출
 - 결과·문항별 검토와 오답 노트 관리
 - 문제 오류 신고와 저장된 해설 조회
@@ -166,8 +166,12 @@ Invoke-RestMethod http://localhost:8000/api/v1/health
 AUTH_REQUIRED=true
 INITIAL_ADMIN_USERNAME=admin
 INITIAL_ADMIN_PASSWORD=충분히-긴-초기-비밀번호
+ADMIN_RECOVERY_KEY_HASH=PBKDF2_형식의_복구키_해시
+ADMIN_RECOVERY_RATE_LIMIT_REQUESTS=3
+ADMIN_RECOVERY_RATE_LIMIT_WINDOW_SECONDS=900
 AUTH_SESSION_MINUTES=30
 AUTH_COOKIE_SECURE=false
+MAINTENANCE_POLL_SECONDS=5
 PASSKEY_RP_ID=localhost
 PASSKEY_RP_NAME=합격비서
 PASSKEY_CHALLENGE_MINUTES=5
@@ -175,13 +179,30 @@ AUTH_RATE_LIMIT_REQUESTS=10
 AUTH_RATE_LIMIT_WINDOW_SECONDS=60
 ```
 
-최초 admin은 DB에 admin 역할 계정이 하나도 없을 때 첫 로그인 요청에서 생성됩니다. 이후에도 admin 로그인 비밀번호는 DB 해시가 아니라 서버의 `INITIAL_ADMIN_PASSWORD`를 항상 기준으로 사용합니다. 값을 변경한 경우 백엔드 서버를 재시작하면 새 비밀번호가 바로 적용됩니다. `INITIAL_ADMIN_PASSWORD`가 비어 있으면 admin으로 로그인할 수 없습니다.
+최초 admin은 DB에 admin 역할 계정이 하나도 없을 때 첫 로그인 요청에서 생성됩니다. admin도 일반 계정과 동일하게 `INITIAL_ADMIN_PASSWORD`로 최초 등록 절차만 열고 Passkey 1개를 등록한 뒤에는 Passkey로만 로그인합니다. `INITIAL_ADMIN_PASSWORD`가 비어 있으면 최초 등록이나 복구 후 재등록을 진행할 수 없습니다.
+
+admin Passkey를 분실했을 때 사용하는 복구 키 원문은 서버나 DB에 저장하지 않고 비밀번호 관리자에 별도로 보관합니다. `.env`에는 아래 명령으로 만든 PBKDF2 해시만 넣습니다.
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -c "from app.services.auth import hash_password; import getpass; print(hash_password(getpass.getpass('Admin recovery key: ')))"
+```
+
+복구 화면에서 키가 확인되면 admin의 Passkey와 활성 세션만 제거하며 로그인시키지는 않습니다. 그 다음 `INITIAL_ADMIN_PASSWORD`로 다시 진입해 새 Passkey를 등록합니다. 복구 요청은 기본적으로 클라이언트 IP당 15분에 3회로 제한하며, 신뢰한 프록시가 전달한 주소만 사용합니다.
 
 로컬 HTTP 개발에서는 `AUTH_COOKIE_SECURE=false`를 사용합니다. HTTPS로 외부에 배포할 때는 반드시 `AUTH_COOKIE_SECURE=true`로 바꾸십시오. 로그인 세션은 원문 토큰이 아니라 SHA-256 해시로 DB에 저장되고, 브라우저에는 JavaScript로 읽을 수 없는 `HttpOnly` 쿠키로 전달됩니다. 세션은 마지막 클릭·터치·키보드·스크롤 활동을 기준으로 30분 동안 유지되며, 사용 중에는 기존 세션 행과 쿠키의 만료시간만 연장합니다. 30분 동안 활동이 없으면 로그인 화면으로 전환하고 만료 안내를 표시합니다. 만료·폐기된 과거 세션은 신규 세션 생성 과정에서 정리합니다. 백엔드 프로세스가 시작될 때 기존 활성 세션을 모두 폐기하므로 서버 재시작 후에는 모든 사용자가 로그인 화면부터 다시 시작합니다. 이 동작은 `python -m app.run`과 `uvicorn app.main:app` 실행 모두에 적용됩니다.
 
 admin은 항상 활성화되는 시스템 계정이므로 `관리 → 계정 관리` 목록에 표시되지 않으며 비활성화할 수도 없습니다. 이 화면에서는 일반 학습자 계정만 등록·활성화·비활성화할 수 있고, 일반 계정 비밀번호는 DB의 PBKDF2 해시로 관리합니다.
 
 일반 계정은 관리자가 발급한 임시 비밀번호로 최초 한 번 로그인한 뒤 현재 기기의 지문, Face ID, Windows Hello 또는 화면 잠금으로 Passkey를 등록해야 합니다. 등록 완료 전에는 Passkey API와 로그아웃 외의 보호 API가 모두 거절됩니다. 이후에는 아이디·비밀번호 입력 없이 `Passkey로 로그인`을 사용합니다. 새 기기의 Passkey 인증이 성공한 시점에만 기존 활성 세션이 폐기되므로, 단순 비밀번호 입력이나 실패한 인증으로 기존 기기가 로그아웃되지 않습니다. 기기를 분실하거나 교체할 때는 admin이 계정 목록의 `기기 초기화`를 실행한 뒤 새 기기에서 다시 등록합니다. 초기화는 계정과 학습 기록을 보존하고 Passkey 및 로그인 세션만 제거합니다.
+
+## 공지와 점검 운영
+
+관리자는 `관리 → 공지 관리`에서 일반 공지와 점검 공지의 팝업 노출 기간을 예약하고, 제목·본문의 허용 색상과 굵기를 선택할 수 있습니다. 일반 공지는 `오늘 하루 보지 않기`를 제공하고, 점검 공지는 닫기만 제공합니다. 점검 공지는 기본적으로 팝업만 표시하며 `점검 화면 표출`을 선택한 경우에만 시작·종료 시각 동안 일반 사용자 접근을 차단합니다. 점검 화면 기간은 다른 점검과 겹치게 저장할 수 없고, 이미 실행된 일정은 재사용하지 않고 새 공지로 등록합니다.
+
+점검 시작 5분 전 학습 또는 모의고사 화면에 시작 시각과 처리 방식을 안내합니다. 시작 시 현재 학습 선택 답안은 서버에 동기화된 마지막 값까지 자동 채점하여 부분 학습 결과와 오답노트에 저장하고, 진행 중 모의고사는 결과 없이 취소합니다. 일반 사용자 세션은 모두 폐기되고 점검 화면 동안 API 접근도 차단되며 admin 세션만 유지됩니다. 백엔드가 기본 5초 간격으로 일정을 집행하므로 브라우저 요청이 없어도 처리되며, 점검 종료 후에는 자동으로 로그인 화면부터 시작합니다.
+
+집중 학습과 영역 전체 학습은 로그인 계정이 아직 한 번도 답안을 제출하지 않은 문항을 먼저 섞어서 출제합니다. 미풀이 문항만으로 요청 수량을 채우지 못할 때에만 이미 풀어 본 문항을 뒤에 보충하며, 다른 계정의 풀이 이력은 우선순위 계산에 사용하지 않습니다. 모의고사는 실제 출제 비율과 무작위성을 유지하기 위해 이 우선순위를 적용하지 않습니다.
 
 Passkey는 Android의 지문/화면 잠금, iOS·iPadOS의 Face ID/Touch ID/기기 암호, Windows Hello를 지원합니다. 웹 애플리케이션은 특정 생체 수단을 강제하지 않으며 운영체제가 허용한 인증 수단을 표시합니다. 모바일에서는 HTTPS, 최신 브라우저, 정확한 `PASSKEY_RP_ID`가 필요합니다. 현재 서버 호환성을 위해 백엔드 WebAuthn 패키지는 `2.8.0`으로 고정되어 있습니다.
 

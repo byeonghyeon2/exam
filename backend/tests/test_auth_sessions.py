@@ -1,4 +1,5 @@
 from datetime import timedelta
+from threading import Event
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select, update
@@ -196,6 +197,17 @@ def test_application_startup_does_not_revoke_sessions_when_auth_is_disabled() ->
         assert client.get("/api/v1/health").status_code == 200
 
     assert revoked == []
+
+
+def test_application_scheduler_checks_maintenance_without_a_browser_request() -> None:
+    called = Event()
+    application = create_app(
+        Settings(auth_required=False, maintenance_poll_seconds=1),
+        maintenance_runner=lambda: called.set() or None,
+    )
+
+    with TestClient(application):
+        assert called.wait(timeout=2)
 
 
 def test_activity_endpoint_refreshes_the_cookie_and_rejects_incomplete_authentication() -> None:

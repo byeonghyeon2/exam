@@ -7,8 +7,11 @@ import { passkeyErrorMessage, startPasskeyAuthentication } from '../auth/passkey
 export function Login({ onAuthenticated }: { onAuthenticated?: () => void }) {
   const client = useQueryClient();
   const [showRegistration, setShowRegistration] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [recoveryUsername, setRecoveryUsername] = useState('admin');
+  const [recoveryKey, setRecoveryKey] = useState('');
   const passkey = useMutation({
     mutationFn: async () => {
       const options = await endpoints.passkeyAuthenticationOptions();
@@ -20,6 +23,10 @@ export function Login({ onAuthenticated }: { onAuthenticated?: () => void }) {
   const registration = useMutation({
     mutationFn: () => endpoints.login(username, password),
     onSuccess: user => { client.setQueryData(['me'], user); onAuthenticated?.(); },
+  });
+  const recovery = useMutation({
+    mutationFn: () => endpoints.recoverAdminPasskey(recoveryUsername, recoveryKey),
+    onSuccess: () => { setRecoveryKey(''); setShowRecovery(false); setShowRegistration(true); },
   });
   const submitRegistration = (event: FormEvent) => {
     event.preventDefault();
@@ -53,6 +60,14 @@ export function Login({ onAuthenticated }: { onAuthenticated?: () => void }) {
       <label>임시 비밀번호<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required minLength={8} /></label>
       {registration.isError && <p className="form-error" role="alert">{registration.error.message}</p>}
       <button className="button" disabled={registration.isPending}>{registration.isPending ? '확인 중…' : '기기 등록 계속'}</button>
+    </form>}
+    <button className="passkey-logout admin-recovery-toggle" disabled={passkey.isPending || registration.isPending || recovery.isPending} onClick={() => setShowRecovery(value => !value)}>관리자 기기 복구</button>
+    {showRecovery && <form onSubmit={event => { event.preventDefault(); recovery.mutate(); }}>
+      <p className="muted">복구는 관리자 Passkey와 로그인 세션만 초기화합니다. 완료 후 관리자 비밀번호로 기기를 다시 등록하세요.</p>
+      <label>관리자 아이디<input value={recoveryUsername} onChange={event => setRecoveryUsername(event.target.value)} autoComplete="username" required minLength={3}/></label>
+      <label>복구 키<input type="password" value={recoveryKey} onChange={event => setRecoveryKey(event.target.value)} autoComplete="off" required minLength={32}/></label>
+      {recovery.isError && <p className="form-error" role="alert">관리자 기기 복구에 실패했습니다.</p>}
+      <button className="button danger-button" disabled={recovery.isPending}>{recovery.isPending?'초기화 중…':'관리자 기기 초기화'}</button>
     </form>}
   </section></main>;
 }

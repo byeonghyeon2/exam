@@ -55,6 +55,12 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
     )
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings
+    def use_full_admin_session(client: TestClient) -> None:
+        with session_factory() as db:
+            admin = db.scalar(select(User).where(User.username == "admin"))
+            _session, token = create_session(db, admin, settings, purpose="full")
+            db.commit()
+        client.cookies.set("certexam_session", token)
     try:
         with TestClient(app, client=("198.51.100.60", 50000)) as client:
             cors = client.options(
@@ -73,6 +79,9 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             assert "SameSite=lax" in logged_in.headers["set-cookie"]
             assert "Secure" not in logged_in.headers["set-cookie"]
             assert "Max-Age=1800" in logged_in.headers["set-cookie"]
+            assert logged_in.json()["passkey_registration_required"] is True
+            assert client.get("/api/v1/admin/users").status_code == 403
+            use_full_admin_session(client)
 
             created = client.post("/api/v1/admin/users", json={"username": "learner", "password": "learner-password", "role": "user"})
             assert created.status_code == 201
@@ -102,6 +111,7 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             assert client.post("/api/v1/auth/logout").status_code == 204
             assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "database-password"}).status_code == 401
 
+            client.cookies.clear()
             learner_login = client.post("/api/v1/auth/login", json={"username": "learner", "password": "learner-password"})
             assert learner_login.status_code == 200
             assert learner_login.json()["password_managed_by_environment"] is False
@@ -119,6 +129,7 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             assert client.post("/api/v1/auth/logout").status_code == 204
             client.cookies.clear()
             assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "strong-admin-password"}).status_code == 200
+            use_full_admin_session(client)
             assert [note["question_uid"] for note in client.get("/api/v1/wrong-notes").json()] == ["ADMIN-WRONG"]
             assert client.patch("/api/v1/admin/users/999999", json={"is_active": False}).status_code == 404
             updated = client.patch(
@@ -134,6 +145,7 @@ def test_admin_bootstrap_login_and_managed_user_access() -> None:
             assert "Secure" in secure_logout.headers["set-cookie"]
             settings.auth_cookie_secure = False
             assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "strong-admin-password"}).status_code == 200
+            use_full_admin_session(client)
             with session_factory() as db:
                 learner = db.scalar(select(User).where(User.username == "learner"))
                 certification = db.scalar(select(Certification))

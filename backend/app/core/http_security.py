@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 
 from fastapi import Request
 
-from app.api.v1.auth import SESSION_COOKIE
+SESSION_COOKIE = "certexam_session"
 
 PROTECTED_DATA_PREFIXES = (
     "/api/v1/study/",
@@ -17,15 +17,17 @@ PROTECTED_DATA_PREFIXES = (
 AUTHENTICATION_PREFIXES = (
     "/api/v1/auth/login",
     "/api/v1/auth/passkeys/",
+    "/api/v1/auth/admin/recovery",
 )
 
 
 class FixedWindowRateLimiter:
     """Small single-process limiter; Nginx remains the distributed perimeter limiter."""
 
-    def __init__(self, limit: int, window_seconds: int) -> None:
+    def __init__(self, limit: int, window_seconds: int, max_keys: int = 10_000) -> None:
         self.limit = limit
         self.window_seconds = window_seconds
+        self.max_keys = max_keys
         self._events: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
 
@@ -33,9 +35,15 @@ class FixedWindowRateLimiter:
         current = time.monotonic() if now is None else now
         boundary = current - self.window_seconds
         with self._lock:
+            for stale_key, stale_events in list(self._events.items()):
+                while stale_events and stale_events[0] <= boundary:
+                    stale_events.popleft()
+                if not stale_events:
+                    self._events.pop(stale_key, None)
+            if key not in self._events and len(self._events) >= self.max_keys:
+                oldest_key = min(self._events, key=lambda item: self._events[item][0])
+                self._events.pop(oldest_key, None)
             events = self._events[key]
-            while events and events[0] <= boundary:
-                events.popleft()
             if len(events) >= self.limit:
                 retry_after = max(1, int(self.window_seconds - (current - events[0]) + 0.999))
                 return False, retry_after

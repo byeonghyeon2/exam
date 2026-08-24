@@ -133,11 +133,36 @@ def test_login_and_passkey_endpoints_have_a_separate_brute_force_limit() -> None
         assert client.get("/api/v1/health").status_code == 200
 
 
+def test_production_rejects_cross_site_state_changes() -> None:
+    settings = settings_for(
+        "production", frontend_origin="https://exam.example.com",
+        auth_rate_limit_requests=20,
+    )
+    with TestClient(create_app(settings)) as client:
+        cross_origin = client.post(
+            "/api/v1/auth/login", json={}, headers={"Origin": "https://attacker.example"},
+        )
+        assert cross_origin.status_code == 403
+        cross_site = client.post(
+            "/api/v1/auth/login", json={}, headers={"Sec-Fetch-Site": "cross-site"},
+        )
+        assert cross_site.status_code == 403
+        same_origin = client.post(
+            "/api/v1/auth/login", json={}, headers={"Origin": "https://exam.example.com"},
+        )
+        assert same_origin.status_code == 422
+
+
 def test_rate_limiter_expires_old_events_and_also_fingerprints_session_cookie() -> None:
     limiter = FixedWindowRateLimiter(limit=1, window_seconds=10)
     assert limiter.consume("ip:test", now=1) == (True, 0)
     assert limiter.consume("ip:test", now=2) == (False, 9)
     assert limiter.consume("ip:test", now=11) == (True, 0)
+    bounded = FixedWindowRateLimiter(limit=1, window_seconds=100, max_keys=2)
+    assert bounded.consume("ip:one", now=1) == (True, 0)
+    assert bounded.consume("ip:two", now=2) == (True, 0)
+    assert bounded.consume("ip:three", now=3) == (True, 0)
+    assert len(bounded._events) == 2
 
     app = create_app(settings_for(question_rate_limit_requests=2))
     with TestClient(app) as client:

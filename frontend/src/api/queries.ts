@@ -1,5 +1,5 @@
 import {api} from './client';
-import type {Certification,ClassificationReport,Domain,ExamQuestionIndex,ExamResult,Explanation,MockReadiness,Question,QuestionReport,StudyHistory,StudySession,StudySummary,Submission,User,WrongNote} from '../types';
+import type {ActiveNotices,Certification,ClassificationReport,Domain,ExamQuestionIndex,ExamResult,Explanation,MockReadiness,Notice,NoticeWrite,Question,QuestionReport,StudyHistory,StudySession,StudySummary,Submission,SystemStatus,User,WrongNote} from '../types';
 import type {ReportType} from '../reporting';
 
 export const endpoints={
@@ -10,6 +10,7 @@ export const endpoints={
   verifyPasskeyRegistration:(credential:Record<string,unknown>)=>api<User>('/auth/passkeys/registration/verify',{method:'POST',body:JSON.stringify({credential})}),
   passkeyAuthenticationOptions:()=>api<Record<string,unknown>>('/auth/passkeys/authentication/options',{method:'POST'}),
   verifyPasskeyAuthentication:(credential:Record<string,unknown>)=>api<User>('/auth/passkeys/authentication/verify',{method:'POST',body:JSON.stringify({credential})}),
+  recoverAdminPasskey:(username:string,recoveryKey:string)=>api<void>('/auth/admin/recovery',{method:'POST',body:JSON.stringify({username,recovery_key:recoveryKey})}),
   users:()=>api<User[]>('/admin/users'),
   createUser:(body:{username:string;password:string;role:'user'|'admin'})=>api<User>('/admin/users',{method:'POST',body:JSON.stringify(body)}),
   updateUser:(id:number,body:{is_active?:boolean;password?:string})=>api<User>(`/admin/users/${id}`,{method:'PATCH',body:JSON.stringify(body)}),
@@ -22,4 +23,5 @@ export const endpoints={
   createExam:(body:object)=>api<{id:string}>('/mock-exams',{method:'POST',body:JSON.stringify(body)}),examQuestions:(id:string)=>api<ExamQuestionIndex>(`/mock-exams/${id}/questions`),examQuestion:(exam:string,q:number)=>api<Question>(`/mock-exams/${exam}/questions/${q}`),saveAnswer:(exam:string,q:number,answers:string[])=>api<void>(`/mock-exams/${exam}/answers/${q}`,{method:'PUT',body:JSON.stringify({selected_answers:answers})}),submitExam:(id:string)=>api<ExamResult>(`/mock-exams/${id}/submit`,{method:'POST'}),leaveExam:(id:string)=>api<{status:string}>(`/mock-exams/${id}/leave`,{method:'POST',keepalive:true}),result:(id:string)=>api<ExamResult>(`/mock-exams/${id}/result`),
   wrongNotes:()=>api<WrongNote[]>('/wrong-notes'),deleteWrongNotes:(questionIds:number[])=>api<{deleted_count:number}>('/wrong-notes',{method:'DELETE',body:JSON.stringify({question_ids:questionIds})}),
   adminDashboard:()=>api<Record<string,number>>('/admin/dashboard'),adminReports:()=>api<QuestionReport[]>('/admin/reports'),adminQuestions:()=>api<{items:Question[];total:number}>('/admin/questions'),unclassified:()=>api<{items:Question[];total:number}>('/admin/classification/unclassified'),classificationReport:()=>api<ClassificationReport>('/admin/classification/report'),mockReadiness:()=>api<MockReadiness>('/admin/mock-exam-readiness'),classifyDomains:(questionIds?:number[],force=false)=>api<Record<string,number>>('/admin/classification/run',{method:'POST',body:JSON.stringify({question_ids:questionIds,only_unclassified:true,force,batch_size:10})}),setDomain:(id:number,domain_code:string)=>api<{status:string;domain_code:string}>(`/admin/questions/${id}/domain`,{method:'PATCH',body:JSON.stringify({domain_code})})
+  ,notices:()=>api<Notice[]>('/admin/notices'),createNotice:(body:NoticeWrite)=>api<Notice>('/admin/notices',{method:'POST',body:JSON.stringify(body)}),updateNotice:(id:number,body:NoticeWrite)=>api<Notice>(`/admin/notices/${id}`,{method:'PATCH',body:JSON.stringify(body)}),deleteNotice:(id:number)=>api<void>(`/admin/notices/${id}`,{method:'DELETE'}),activeNotices:()=>api<ActiveNotices>('/notices/active'),systemStatus:()=>api<SystemStatus>('/system/status'),finalizeForMaintenance:()=>api<void>('/maintenance/finalize-current-user',{method:'POST',keepalive:true}),saveStudyDraft:(id:string,questionId:number,selectedAnswers:string[])=>api<void>(`/study/sessions/${id}/draft`,{method:'PUT',body:JSON.stringify({question_id:questionId,selected_answers:selectedAnswers})})
 };

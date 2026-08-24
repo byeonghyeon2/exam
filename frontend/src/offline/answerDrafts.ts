@@ -39,6 +39,52 @@ export async function saveAnswerDraft(input:Omit<AnswerDraft,'key'|'updatedAt'>)
   return draft;
 }
 
+/**
+ * Marks the exact draft that was sent to the API as synchronized.  A newer
+ * local selection must remain pending when an older request completes later.
+ */
+export async function markAnswerDraftSynced(draft:AnswerDraft):Promise<boolean>{
+  if(!globalThis.indexedDB){
+    const current=memory.get(draft.key);
+    if(!current||current.updatedAt!==draft.updatedAt)return false;
+    memory.set(draft.key,{...current,pending:false});
+    return true;
+  }
+  return withStore<boolean>('readwrite',(store,resolve,reject)=>{
+    const request=store.get(draft.key);
+    request.onerror=()=>reject(request.error);
+    request.onsuccess=()=>{
+      const current=request.result as AnswerDraft|undefined;
+      if(!current||current.updatedAt!==draft.updatedAt){resolve(false);return}
+      const update=store.put({...current,pending:false});
+      update.onerror=()=>reject(update.error);
+      update.onsuccess=()=>resolve(true);
+    };
+  });
+}
+
+/** Replays unsynchronized selections without persisting any question content. */
+export async function replayPendingAnswerDrafts(
+  userId:number,
+  kind:DraftKind,
+  sessionId:string,
+  send:(draft:AnswerDraft)=>Promise<void>,
+):Promise<number>{
+  const pending=(await listSessionDrafts(userId,kind,sessionId))
+    .filter(draft=>draft.pending)
+    .sort((a,b)=>a.updatedAt.localeCompare(b.updatedAt));
+  let synced=0;
+  for(const draft of pending){
+    try{
+      await send(draft);
+      if(await markAnswerDraftSynced(draft))synced+=1;
+    }catch{
+      // Keep this locally stored selection for the next reconnection attempt.
+    }
+  }
+  return synced;
+}
+
 export async function listSessionDrafts(userId:number,kind:DraftKind,sessionId:string):Promise<AnswerDraft[]>{
   const prefix=`${userId}:${kind}:${sessionId}:`;
   if(!globalThis.indexedDB){

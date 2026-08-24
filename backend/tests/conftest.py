@@ -7,5 +7,7 @@ def isolate_global_app_startup_from_the_development_database():
     from app.main import app
 
     app.state.disable_startup_session_revocation = True
+    app.state.disable_maintenance_scheduler = True
     yield
     app.state.disable_startup_session_revocation = False
+    app.state.disable_maintenance_scheduler = False

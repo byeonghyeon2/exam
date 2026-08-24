@@ -22,4 +22,7 @@ def test_migrations_cover_every_application_table() -> None:
     challenge_migration = Path(__file__).parents[1] / "alembic/versions/0009_passkey_challenges.py"
     assert '"exam_passkey_challenges"' in challenge_migration.read_text(encoding="utf-8")
     migrated_tables.add("exam_passkey_challenges")
+    notice_migration = Path(__file__).parents[1] / "alembic/versions/0010_notices_and_maintenance.py"
+    assert '"exam_notices"' in notice_migration.read_text(encoding="utf-8")
+    migrated_tables.add("exam_notices")
     assert migrated_tables == set(Base.metadata.tables)

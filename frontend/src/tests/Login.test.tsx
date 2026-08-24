@@ -61,7 +61,8 @@ describe('Passkey-first login', () => {
       ...authenticated, passkey_registered: false, passkey_registration_required: true,
     };
     vi.spyOn(endpoints, 'login').mockResolvedValue(pending);
-    const client = renderLogin();
+    const onAuthenticated=vi.fn();
+    const client = renderLogin(onAuthenticated);
 
     await userEvent.click(screen.getByRole('button', { name: '최초 기기 등록' }));
     await userEvent.type(screen.getByLabelText('아이디'), 'learner');
@@ -70,6 +71,7 @@ describe('Passkey-first login', () => {
 
     expect(endpoints.login).toHaveBeenCalledWith('learner', 'temporary-password');
     await waitFor(() => expect(client.getQueryData(['me'])).toEqual(pending));
+    expect(onAuthenticated).toHaveBeenCalledTimes(1);
   });
 
   it('shows stable Korean guidance when mobile Passkey authentication is cancelled', async () => {
@@ -112,5 +114,30 @@ describe('Passkey-first login', () => {
     expect(screen.getByRole('button', { name: '확인 중…' })).toBeDisabled();
     rejectLogin(new Error('발급 계정을 확인해주세요.'));
     expect(await screen.findByText('발급 계정을 확인해주세요.')).toBeInTheDocument();
+  });
+
+  it('resets only the administrator device with the offline recovery key',async()=>{
+    const recover=vi.spyOn(endpoints,'recoverAdminPasskey').mockResolvedValue();
+    renderLogin();
+    await userEvent.click(screen.getByRole('button',{name:'관리자 기기 복구'}));
+    await userEvent.clear(screen.getByLabelText('관리자 아이디'));
+    await userEvent.type(screen.getByLabelText('관리자 아이디'),'admin');
+    const key='a'.repeat(32);
+    await userEvent.type(screen.getByLabelText('복구 키'),key);
+    await userEvent.click(screen.getByRole('button',{name:'관리자 기기 초기화'}));
+    await waitFor(()=>expect(recover).toHaveBeenCalledWith('admin',key));
+    expect(screen.getByLabelText('임시 비밀번호')).toBeInTheDocument();
+  });
+
+  it('blocks duplicate recovery submission and shows a stable recovery error',async()=>{
+    let rejectRecovery!:(reason:Error)=>void;
+    vi.spyOn(endpoints,'recoverAdminPasskey').mockImplementation(()=>new Promise((_resolve,reject)=>{rejectRecovery=reject}));
+    renderLogin();
+    await userEvent.click(screen.getByRole('button',{name:'관리자 기기 복구'}));
+    await userEvent.type(screen.getByLabelText('복구 키'),'a'.repeat(32));
+    await userEvent.click(screen.getByRole('button',{name:'관리자 기기 초기화'}));
+    expect(screen.getByRole('button',{name:'초기화 중…'})).toBeDisabled();
+    rejectRecovery(new Error('invalid recovery key'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('관리자 기기 복구에 실패했습니다.');
   });
 });

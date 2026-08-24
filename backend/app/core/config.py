@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     auth_required: bool = True
     initial_admin_username: str = "admin"
     initial_admin_password: str = ""
+    # PBKDF2 value produced by services.auth.hash_password(). The recovery key
+    # itself must never be committed or stored in the database.
+    admin_recovery_key_hash: str = ""
     auth_session_minutes: int = Field(30, ge=5, le=1440)
     auth_cookie_secure: bool = False
     passkey_rp_id: str = ""
@@ -42,6 +45,9 @@ class Settings(BaseSettings):
     question_rate_limit_window_seconds: int = Field(60, ge=1, le=3600)
     auth_rate_limit_requests: int = Field(10, ge=1, le=1000)
     auth_rate_limit_window_seconds: int = Field(60, ge=1, le=3600)
+    admin_recovery_rate_limit_requests: int = Field(3, ge=1, le=20)
+    admin_recovery_rate_limit_window_seconds: int = Field(900, ge=60, le=86400)
+    maintenance_poll_seconds: int = Field(5, ge=1, le=60)
     openai_api_key: str = ""
     openai_model: str = ""
     openai_verification_model: str = ""

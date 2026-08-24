@@ -43,6 +43,74 @@ class PasskeyCredentialRequest(BaseModel):
     credential: dict[str, Any]
 
 
+class AdminRecoveryRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    recovery_key: str = Field(min_length=32, max_length=512)
+
+
+NoticeType = Literal["general", "maintenance"]
+NoticeColor = Literal["default", "green", "blue", "orange", "red", "gray", "purple"]
+NoticeWeight = Literal["normal", "bold"]
+
+
+class NoticeWrite(BaseModel):
+    notice_type: NoticeType = "general"
+    title: str = Field(min_length=1, max_length=255)
+    content: str = Field(min_length=1, max_length=10000)
+    display_start_at: datetime
+    display_end_at: datetime
+    maintenance_start_at: datetime | None = None
+    maintenance_end_at: datetime | None = None
+    maintenance_screen_enabled: bool = False
+    title_color: NoticeColor = "default"
+    content_color: NoticeColor = "default"
+    title_weight: NoticeWeight = "bold"
+    content_weight: NoticeWeight = "normal"
+    is_published: bool = False
+
+    @model_validator(mode="after")
+    def validate_time_ranges(self) -> "NoticeWrite":
+        if self.display_end_at <= self.display_start_at:
+            raise ValueError("display_end_at must be after display_start_at")
+        is_maintenance = self.notice_type == "maintenance"
+        if not is_maintenance and self.maintenance_screen_enabled:
+            raise ValueError("maintenance screen is available only for maintenance notices")
+        if self.maintenance_screen_enabled and (self.maintenance_start_at is None or self.maintenance_end_at is None):
+            raise ValueError("maintenance dates are required")
+        if not self.maintenance_screen_enabled and (
+            self.maintenance_start_at is not None or self.maintenance_end_at is not None
+        ):
+            raise ValueError("maintenance dates require the maintenance screen")
+        if self.maintenance_start_at and self.maintenance_end_at and self.maintenance_end_at <= self.maintenance_start_at:
+            raise ValueError("maintenance_end_at must be after maintenance_start_at")
+        return self
+
+
+class NoticePatch(NoticeWrite):
+    pass
+
+
+class NoticeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    notice_type: NoticeType
+    title: str
+    content: str
+    display_start_at: datetime
+    display_end_at: datetime
+    maintenance_start_at: datetime | None
+    maintenance_end_at: datetime | None
+    maintenance_screen_enabled: bool
+    title_color: NoticeColor
+    content_color: NoticeColor
+    title_weight: NoticeWeight
+    content_weight: NoticeWeight
+    is_published: bool
+    updated_at: datetime
+    maintenance_started_at: datetime | None
+    revision: int
+
+
 class ChoiceOut(ORMModel):
     choice_key: str
     text_en: str
@@ -95,6 +163,11 @@ class QuestionOut(ORMModel):
 
 class SubmitAnswer(BaseModel):
     selected_answers: list[str]
+
+
+class StudyDraftUpdate(BaseModel):
+    question_id: int
+    selected_answers: list[str] = Field(max_length=10)
 
 
 class AnswerResult(BaseModel):

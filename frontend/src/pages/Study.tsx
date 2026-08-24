@@ -1,13 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { endpoints } from '../api/queries';
+import { ApiError } from '../api/client';
 import type { Explanation, Question, StudySession, Submission } from '../types';
 import { ErrorState, InvalidAccess, isInvalidSessionError, Loading, PageHeader, Progress } from '../components/common';
 import { ReportModal } from '../components/ReportModal';
 import { useStudyExitGuard } from '../components/StudyExitGuard';
-import { deleteQuestionDraft, deleteSessionDrafts, listSessionDrafts, saveAnswerDraft } from '../offline/answerDrafts';
+import { deleteQuestionDraft, deleteSessionDrafts, listSessionDrafts, markAnswerDraftSynced, replayPendingAnswerDrafts, saveAnswerDraft } from '../offline/answerDrafts';
+import type { AnswerDraft } from '../offline/answerDrafts';
 import type { User } from '../types';
 
 const DEFAULT_STUDY_QUESTION_COUNT = 10;
@@ -128,7 +130,34 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
   const [result, setResult] = useState<Submission>();
   const [movingNext, setMovingNext] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [syncInterrupted, setSyncInterrupted] = useState(false);
   const questionRef = useRef<HTMLElement>(null);
+  const draftSyncQueue = useRef<Promise<void>>(Promise.resolve());
+  const enqueueDraftSync=useCallback((questionId:number,selectedAnswers:string[],draftPromise:Promise<AnswerDraft|undefined>)=>{
+    const operation=draftSyncQueue.current.catch(()=>undefined).then(async()=>{
+      const draft=await draftPromise;
+      if(draft){
+        try{
+          const latest=(await listSessionDrafts(userId,'study',sessionId)).find(item=>item.questionId===questionId);
+          if(latest&&latest.updatedAt!==draft.updatedAt)return;
+        }catch{
+          // Preserve click order through the queue when device storage is unavailable.
+        }
+      }
+      try{
+        await endpoints.saveStudyDraft(sessionId,questionId,selectedAnswers);
+      }catch(error){
+        if(error instanceof ApiError&&error.status===409){
+          await deleteQuestionDraft(userId,'study',sessionId,questionId);
+          return;
+        }
+        throw error;
+      }
+      if(draft)await markAnswerDraftSynced(draft);
+    });
+    draftSyncQueue.current=operation;
+    return operation;
+  },[sessionId,userId]);
   const submit = useMutation({
     mutationFn: () => endpoints.submitStudy(question!.id, sessionId, { selected_answers: selected }),
     onSuccess: value => { setResult(value);onAnswered();if(question)void deleteQuestionDraft(userId,'study',sessionId,question.id); },
@@ -163,6 +192,32 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
     });
     return()=>{active=false};
   },[question,sessionId,userId]);
+  useEffect(()=>{
+    let active=true;
+    let terminal=false;
+    let replaying=false;
+    const replay=async()=>{
+      if(terminal||replaying)return;
+      replaying=true;
+      try{
+        await replayPendingAnswerDrafts(userId,'study',sessionId,draft=>
+          enqueueDraftSync(draft.questionId,draft.selectedAnswers,Promise.resolve(draft)).catch(error=>{
+            if(error instanceof ApiError&&error.status===401)terminal=true;
+            throw error;
+          }),
+        );
+        const pending=(await listSessionDrafts(userId,'study',sessionId)).some(draft=>draft.pending);
+        if(active)setSyncInterrupted(pending);
+      }catch{
+        // IndexedDB can be unavailable in privacy modes. The current answer is
+        // still submitted normally and no question content is retained here.
+      }finally{replaying=false}
+    };
+    void replay();
+    window.addEventListener('online',replay);
+    const retryTimer=window.setInterval(replay,15_000);
+    return()=>{active=false;window.removeEventListener('online',replay);window.clearInterval(retryTimer)};
+  },[enqueueDraftSync,sessionId,userId]);
 
   if (!question) {
     const summary = session.summary;
@@ -180,7 +235,16 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
         ? current.filter(item => item !== choiceId)
         : current.length < question.required_answer_count ? [...current, choiceId] : current)
       : (current.includes(choiceId) ? [] : [choiceId]);
-    void saveAnswerDraft({userId,kind:'study',sessionId,questionId:question.id,selectedAnswers:next,currentIndex:session.current_index,pending:true});
+    const draftPromise=saveAnswerDraft({userId,kind:'study',sessionId,questionId:question.id,selectedAnswers:next,currentIndex:session.current_index,pending:true}).catch(()=>undefined);
+    void (async()=>{
+      try{
+        await enqueueDraftSync(question.id,next,draftPromise);
+        try{
+          const pending=(await listSessionDrafts(userId,'study',sessionId)).some(item=>item.pending);
+          setSyncInterrupted(pending);
+        }catch{setSyncInterrupted(false)}
+      }catch{setSyncInterrupted(true)}
+    })();
     return next;
   });
   return <>
@@ -190,6 +254,7 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
       action={<span className="badge">{multiple ? `${question.required_answer_count}개 선택` : '1개 선택'}</span>}
     />
     <Progress label="학습 진도" value={(session.current_index / session.total_questions) * 100} />
+    {syncInterrupted&&<div className="connection-banner" role="status" aria-label="답안 저장 상태">서버 연결이 끊겨 답안을 이 기기에 임시 보관했습니다. 연결되면 자동 저장됩니다.</div>}
     <section className="question" ref={questionRef}>
       <p className="question-en">{question.question_en}</p>
       <h2>{question.question_ko}</h2>

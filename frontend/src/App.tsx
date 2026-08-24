@@ -1,13 +1,14 @@
-import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { endpoints } from './api/queries';
 import { ApiError } from './api/client';
 import { Loading } from './components/common';
 import { ContentProtection } from './components/ContentProtection';
 import { Layout } from './components/Layout';
+import { MaintenanceScreen, NoticeCenter } from './components/NoticeCenter';
 import { SESSION_EXPIRED_EVENT, SessionActivity } from './components/SessionActivity';
-import { Admin } from './pages/Admin';
+import { Admin, AdminNotices, AdminQuestions, AdminUsers } from './pages/Admin';
 import { CertificationDetail, Certifications } from './pages/Certifications';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
@@ -18,10 +19,15 @@ import { Study } from './pages/Study';
 import { WrongNotes } from './pages/WrongNotes';
 
 export function App() {
+  const queryClient=useQueryClient();
   const me = useQuery({ queryKey: ['me'], queryFn: endpoints.me, retry: false });
+  const system=useQuery({queryKey:['system-status'],queryFn:endpoints.systemStatus,retry:false,refetchInterval:15_000});
   const [sessionExpired, setSessionExpired] = useState(false);
   const [showExpirationNotice, setShowExpirationNotice] = useState(false);
+  const [adminLoginMode,setAdminLoginMode]=useState(false);
+  const wasInMaintenance=useRef(false);
   const unauthenticated = me.error instanceof ApiError && me.error.status === 401;
+  const refetchMe=me.refetch;
   useEffect(() => {
     const expire = () => { setSessionExpired(true); setShowExpirationNotice(true); };
     window.addEventListener(SESSION_EXPIRED_EVENT, expire);
@@ -29,11 +35,27 @@ export function App() {
   }, []);
   useEffect(()=>{
     if(!me.isError||unauthenticated)return;
-    const timer=window.setInterval(()=>void me.refetch(),5_000);
+    const timer=window.setInterval(()=>void refetchMe(),5_000);
     return()=>window.clearInterval(timer);
-  },[me.isError,me.refetch,unauthenticated]);
+  },[me.isError,refetchMe,unauthenticated]);
+  const maintenance=system.data?.maintenance_active?system.data.maintenance:null;
+  useEffect(()=>{
+    if(maintenance){wasInMaintenance.current=true;return;}
+    if(wasInMaintenance.current){window.location.assign('/');}
+  },[maintenance]);
+  useEffect(()=>{
+    if(!maintenance||me.data?.role!=='user')return;
+    const marker=`maintenance-finalized:${maintenance.id}:${maintenance.maintenance_start_at}`;
+    if(sessionStorage.getItem(marker)==='yes')return;
+    sessionStorage.setItem(marker,'yes');
+    void endpoints.finalizeForMaintenance().catch(()=>undefined).then(()=>endpoints.logout().catch(()=>undefined)).finally(()=>{
+      queryClient.removeQueries({queryKey:['me']});
+    });
+  },[maintenance,me.data?.role,queryClient]);
   let content;
-  if (sessionExpired) content = <Routes><Route path="*" element={<Login onAuthenticated={() => { setSessionExpired(false); setShowExpirationNotice(false); }} />} /></Routes>;
+  if(maintenance&&me.data?.role!=='admin'&&!adminLoginMode)content=<MaintenanceScreen notice={maintenance} onAdminLogin={()=>setAdminLoginMode(true)}/>;
+  else if(maintenance&&adminLoginMode&&me.data?.role!=='admin')content=<Routes><Route path="*" element={<Login onAuthenticated={()=>setAdminLoginMode(false)}/>} /></Routes>;
+  else if (sessionExpired) content = <Routes><Route path="*" element={<Login onAuthenticated={() => { setSessionExpired(false); setShowExpirationNotice(false); }} />} /></Routes>;
   else if (me.isLoading) content = <main className="login-page"><Loading /></main>;
   else if (unauthenticated) content = <Routes><Route path="*" element={<Login />} /></Routes>;
   else if (!me.data) content = <main className="login-page"><div className="state error" role="alert"><strong>서버 연결이 일시적으로 끊겼습니다</strong><span>현재 화면과 임시 답안을 유지한 채 자동으로 다시 연결합니다.</span><button onClick={() => void me.refetch()}>다시 연결</button></div></main>;
@@ -51,11 +73,16 @@ export function App() {
       <Route path="results/:id/review" element={<Results />} />
       <Route path="wrong-notes" element={<WrongNotes />} />
       <Route path="admin" element={me.data.role === 'admin' ? <Admin /> : <Navigate to="/" replace />} />
+      <Route path="admin/users" element={me.data.role === 'admin' ? <AdminUsers /> : <Navigate to="/" replace />} />
+      <Route path="admin/questions" element={me.data.role === 'admin' ? <AdminQuestions /> : <Navigate to="/" replace />} />
+      <Route path="admin/notices" element={me.data.role === 'admin' ? <AdminNotices /> : <Navigate to="/" replace />} />
       <Route path="*" element={<div className="state"><strong>페이지를 찾을 수 없습니다.</strong><a href="/">대시보드로 이동</a></div>} />
     </Route>
   </Routes>;
-  return <ContentProtection enabled={me.data?.role !== 'admin'}>
+  const adminFullyAuthenticated=me.data?.role==='admin'&&!me.data.passkey_registration_required&&!me.data.passkey_authentication_required;
+  return <ContentProtection enabled={!adminFullyAuthenticated}>
     {me.data && !sessionExpired && !me.data.passkey_registration_required && !me.data.passkey_authentication_required && <SessionActivity />}
+    {me.data&&!maintenance&&!sessionExpired&&!me.data.passkey_registration_required&&!me.data.passkey_authentication_required&&<NoticeCenter/>}
     {me.data&&me.isError&&!unauthenticated&&<div className="connection-banner global-connection-banner" role="status">서버 연결이 끊겼습니다. 현재 답안을 이 기기에 보관하고 재연결 중입니다.</div>}
     {content}
     {showExpirationNotice && <div className="modal-backdrop"><section className="modal session-expired-modal" role="alertdialog" aria-modal="true" aria-labelledby="session-expired-title"><p className="eyebrow">로그인 안내</p><h2 id="session-expired-title">세션이 만료되었습니다</h2><p>30분 동안 활동이 없어 자동으로 로그아웃되었습니다. 다시 로그인해 주세요.</p><div className="actions"><button className="button" onClick={() => setShowExpirationNotice(false)}>확인</button></div></section></div>}

@@ -7,7 +7,7 @@ import { endpoints } from '../api/queries';
 import { ApiError } from '../api/client';
 import { StudyExitGuardContext } from '../components/StudyExitGuard';
 import { Study } from '../pages/Study';
-import { clearAnswerDraftsForTests, saveAnswerDraft } from '../offline/answerDrafts';
+import { clearAnswerDraftsForTests, listSessionDrafts, saveAnswerDraft } from '../offline/answerDrafts';
 
 const session = {
   id: 'session-1',
@@ -74,7 +74,8 @@ describe('Study', () => {
     await saveAnswerDraft({userId:2,kind:'study',sessionId:'session-1',questionId:10,selectedAnswers:['B'],currentIndex:0,pending:true});
     vi.spyOn(endpoints,'study').mockResolvedValue(session);
     renderStudy();
-    expect(await screen.findByRole('radio',{name:/다른 선택/})).toBeChecked();
+    const restored=await screen.findByRole('radio',{name:/다른 선택/});
+    await waitFor(()=>expect(restored).toBeChecked());
   });
 
   it('creates an all-domain study from query options and navigates to its session', async () => {
@@ -119,6 +120,47 @@ describe('Study', () => {
     expect(answer).not.toBeChecked();
     expect(answer.closest('label')).not.toHaveClass('selected');
     expect(screen.getByRole('button', { name: '정답 확인' })).toBeDisabled();
+  });
+
+  it('replays a failed study draft after the backend recovers while the browser stays online',async()=>{
+    vi.spyOn(endpoints,'study').mockResolvedValue(session);
+    const saveDraft=vi.spyOn(endpoints,'saveStudyDraft')
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const intervals=vi.spyOn(window,'setInterval');
+    const user=userEvent.setup();
+    renderStudy();
+
+    await user.click(await screen.findByRole('radio',{name:/사용자 선택/}));
+    await waitFor(()=>expect(saveDraft).toHaveBeenCalledTimes(1));
+    await waitFor(async()=>expect((await listSessionDrafts(2,'study','session-1'))[0]).toMatchObject({selectedAnswers:['A'],pending:true}));
+    expect(screen.getByRole('status',{name:'답안 저장 상태'})).toHaveTextContent('임시 보관');
+
+    const retry=intervals.mock.calls.find(([,delay])=>delay===15_000)?.[0];
+    expect(typeof retry).toBe('function');
+    if(typeof retry==='function')retry();
+    await waitFor(()=>expect(saveDraft).toHaveBeenCalledTimes(2));
+    await waitFor(async()=>expect((await listSessionDrafts(2,'study','session-1'))[0]).toMatchObject({selectedAnswers:['A'],pending:false}));
+    expect(screen.queryByRole('status',{name:'답안 저장 상태'})).not.toBeInTheDocument();
+  });
+
+  it('serializes rapid answer changes so the newest server draft cannot be overwritten',async()=>{
+    vi.spyOn(endpoints,'study').mockResolvedValue(session);
+    let releaseFirst!:()=>void;
+    const saveDraft=vi.spyOn(endpoints,'saveStudyDraft')
+      .mockImplementationOnce(()=>new Promise<void>(resolve=>{releaseFirst=resolve}))
+      .mockResolvedValueOnce(undefined);
+    const user=userEvent.setup();
+    renderStudy();
+
+    await user.click(await screen.findByRole('radio',{name:/사용자 선택/}));
+    await waitFor(()=>expect(saveDraft).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('radio',{name:/다른 선택/}));
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+
+    releaseFirst();
+    await waitFor(()=>expect(saveDraft).toHaveBeenCalledTimes(2));
+    expect(saveDraft.mock.calls.map(call=>call[2])).toEqual([['A'],['B']]);
   });
 
   it('opens the shared three-choice exit flow from the study exit button', async () => {

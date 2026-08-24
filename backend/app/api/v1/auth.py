@@ -1,15 +1,19 @@
 import hashlib
 import hmac
+import logging
 import secrets
 from datetime import UTC, timedelta
+from threading import Lock
+from time import monotonic
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 
 from app.core.config import Settings, get_settings
+from app.core.http_security import rate_limit_keys
 from app.db.base import utcnow
 from app.db.session import get_db
 from app.models.entities import (
@@ -24,6 +28,7 @@ from app.models.entities import (
     WrongNote,
 )
 from app.schemas.api import (
+    AdminRecoveryRequest,
     LoginRequest,
     PasskeyCredentialRequest,
     SessionActivityRequest,
@@ -40,9 +45,34 @@ from app.services.auth import (
     refresh_session,
     verify_password,
 )
+from app.services.maintenance import enforce_active_maintenance
 
 SESSION_COOKIE = "certexam_session"
 PASSKEY_CHALLENGE_COOKIE = "certexam_passkey_challenge"
+RECOVERY_ATTEMPTS: dict[str, list[float]] = {}
+RECOVERY_LOCK = Lock()
+logger = logging.getLogger(__name__)
+
+
+def recovery_allowed(key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
+    now = monotonic()
+    with RECOVERY_LOCK:
+        for stale_key, stamps in list(RECOVERY_ATTEMPTS.items()):
+            fresh = [stamp for stamp in stamps if now - stamp < window_seconds]
+            if fresh:
+                RECOVERY_ATTEMPTS[stale_key] = fresh
+            else:
+                RECOVERY_ATTEMPTS.pop(stale_key, None)
+        if key not in RECOVERY_ATTEMPTS and len(RECOVERY_ATTEMPTS) >= 10_000:
+            oldest_key = min(RECOVERY_ATTEMPTS, key=lambda item: RECOVERY_ATTEMPTS[item][0])
+            RECOVERY_ATTEMPTS.pop(oldest_key, None)
+        attempts = [stamp for stamp in RECOVERY_ATTEMPTS.get(key, []) if now - stamp < window_seconds]
+        if len(attempts) >= limit:
+            RECOVERY_ATTEMPTS[key] = attempts
+            return False, max(1, int(window_seconds - (now - attempts[0])))
+        attempts.append(now)
+        RECOVERY_ATTEMPTS[key] = attempts
+        return True, 0
 Db = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 
@@ -81,6 +111,20 @@ def require_admin(
     if user is None or user.role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "관리자 권한이 필요합니다")
     return user
+
+
+def maintenance_current_user(
+    user: Annotated[User | None, Depends(current_user)], db: Db, settings: AppSettings
+) -> User | None:
+    if not settings.auth_required or user is None or user.role == "admin":
+        return user
+    reject_learner_during_maintenance(db, user)
+    return user
+
+
+def reject_learner_during_maintenance(db: Session, user: User) -> None:
+    if user.role != "admin" and enforce_active_maintenance(db) is not None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "현재 점검 중입니다")
 
 
 def user_response(db: Session, user: User, session: AuthSession, settings: Settings) -> UserOut:
@@ -145,7 +189,7 @@ def require_ceremony(
     if identity is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "로그인이 필요합니다")
     session, user = identity
-    if user.role == "admin" or session.purpose != purpose:
+    if session.purpose != purpose:
         raise HTTPException(status.HTTP_409_CONFLICT, "현재 계정에서 진행할 수 없는 인증 단계입니다")
     return session, user
 
@@ -265,29 +309,26 @@ def login(payload: LoginRequest, response: Response, db: Db, settings: AppSettin
     )
     if not password_valid or (not is_environment_admin and not user.is_active):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "아이디 또는 비밀번호가 올바르지 않습니다")
+    reject_learner_during_maintenance(db, user)
     if is_environment_admin:
         user.is_active = True
         user.role = "admin"
-        purpose = "full"
-    else:
-        registered = db.scalar(
-            select(PasskeyCredential.id).where(PasskeyCredential.user_id == user.id)
-        ) is not None
-        if registered:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "등록된 계정입니다. Passkey로 로그인해주세요",
-            )
-        purpose = "passkey_registration"
+    registered = db.scalar(
+        select(PasskeyCredential.id).where(PasskeyCredential.user_id == user.id)
+    ) is not None
+    if registered:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "등록된 계정입니다. Passkey로 로그인해주세요",
+        )
+    purpose = "passkey_registration"
     session, raw_token = create_session(
         db,
         user,
         settings,
         purpose=purpose,
-        revoke_existing=purpose == "full",
+        revoke_existing=False,
     )
-    if purpose == "full":
-        user.last_login_at = utcnow()
     db.commit()
     set_session_cookie(response, raw_token, settings)
     return user_response(db, user, session, settings)
@@ -323,9 +364,10 @@ def session_activity(
 ) -> Response:
     if identity is None or session_token is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "로그인이 필요합니다")
-    session, _user = identity
+    session, user = identity
     if session.purpose != "full":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Passkey 인증을 완료해야 합니다")
+    reject_learner_during_maintenance(db, user)
     max_age = refresh_session(db, session, settings, payload.idle_seconds)
     db.commit()
     set_session_cookie(response, session_token, settings, max_age_seconds=max_age)
@@ -341,6 +383,7 @@ def me(
 ) -> UserOut:
     if identity is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "로그인이 필요합니다")
+    reject_learner_during_maintenance(db, identity[1])
     return user_response(db, identity[1], identity[0], settings)
 
 
@@ -351,6 +394,7 @@ def passkey_registration_options(
     settings: AppSettings,
 ) -> dict[str, Any]:
     session, user = require_ceremony(identity, "passkey_registration")
+    reject_learner_during_maintenance(db, user)
     if db.scalar(select(PasskeyCredential.id).where(PasskeyCredential.user_id == user.id)):
         raise HTTPException(status.HTTP_409_CONFLICT, "이미 Passkey가 등록되어 있습니다")
     challenge = passkeys.new_challenge()
@@ -367,6 +411,7 @@ def passkey_registration_verify(
     settings: AppSettings,
 ) -> UserOut:
     session, user = require_ceremony(identity, "passkey_registration")
+    reject_learner_during_maintenance(db, user)
     challenge = expected_challenge(session, "registration")
     try:
         verified = passkeys.verify_registration(
@@ -374,6 +419,22 @@ def passkey_registration_verify(
         )
     except Exception as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Passkey 등록을 검증하지 못했습니다") from exc
+    locked_user = db.scalar(select(User).where(User.id == user.id).with_for_update())
+    locked_session = db.scalar(
+        select(AuthSession).where(AuthSession.id == session.id).with_for_update()
+    )
+    if (
+        locked_user is None
+        or not locked_user.is_active
+        or locked_session is None
+        or locked_session.revoked_at is not None
+        or locked_session.purpose != "passkey_registration"
+    ):
+        raise HTTPException(status.HTTP_409_CONFLICT, "기기 등록 세션이 만료되었습니다")
+    current_challenge = expected_challenge(locked_session, "registration")
+    if not hmac.compare_digest(challenge, current_challenge):
+        raise HTTPException(status.HTTP_409_CONFLICT, "기기 등록 요청이 변경되었습니다")
+    session, user = locked_session, locked_user
     credential_id = verified.credential_id
     if db.scalar(
         select(PasskeyCredential.id).where(
@@ -426,12 +487,21 @@ def passkey_authentication_verify(
         credential_id = base64url_to_bytes(str(payload.credential.get("id", "")))
     except Exception as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Passkey 인증에 실패했습니다") from exc
-    credential = db.scalar(
-        select(PasskeyCredential).where(PasskeyCredential.credential_id == credential_id)
+    credential_owner_id = db.scalar(
+        select(PasskeyCredential.user_id).where(PasskeyCredential.credential_id == credential_id)
     )
-    user = db.get(User, credential.user_id) if credential else None
-    if credential is None or user is None or not user.is_active or user.role == "admin":
+    user = db.scalar(
+        select(User).where(User.id == credential_owner_id).with_for_update()
+    ) if credential_owner_id is not None else None
+    credential = db.scalar(
+        select(PasskeyCredential).where(
+            PasskeyCredential.credential_id == credential_id,
+            PasskeyCredential.user_id == credential_owner_id,
+        ).with_for_update()
+    ) if user is not None else None
+    if credential is None or user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Passkey 인증에 실패했습니다")
+    reject_learner_during_maintenance(db, user)
     try:
         verified = passkeys.verify_authentication(
             settings=settings,
@@ -452,7 +522,59 @@ def passkey_authentication_verify(
     return user_response(db, user, session, settings)
 
 
-protected = APIRouter(dependencies=[Depends(current_user)])
+@public.post("/auth/admin/recovery", status_code=status.HTTP_204_NO_CONTENT)
+def admin_recovery(payload: AdminRecoveryRequest, request: Request, db: Db, settings: AppSettings) -> Response:
+    """Reset only the administrator device credential; never create a login session."""
+    username = payload.username.strip().lower()
+    client_key = rate_limit_keys(request, settings.proxy_trusted_ips)[0]
+    allowed, retry_after = recovery_allowed(
+        client_key,
+        settings.admin_recovery_rate_limit_requests,
+        settings.admin_recovery_rate_limit_window_seconds,
+    )
+    if not allowed:
+        logger.warning(
+            "Admin device recovery rate limited",
+            extra={"client_key_hash": hashlib.sha256(client_key.encode()).hexdigest()[:16]},
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "관리자 기기 복구 시도 횟수를 초과했습니다",
+            headers={"Retry-After": str(retry_after)},
+        )
+    expected_username = settings.initial_admin_username.strip().lower()
+    # Deliberately keep the public error indistinguishable for unknown users,
+    # missing configuration and invalid recovery material.
+    configured_hash = settings.admin_recovery_key_hash
+    valid = (
+        username == expected_username
+        and bool(configured_hash)
+        and verify_password(payload.recovery_key, configured_hash)
+    )
+    if not valid:
+        logger.warning(
+            "Admin device recovery rejected",
+            extra={"client_key_hash": hashlib.sha256(client_key.encode()).hexdigest()[:16]},
+        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "관리자 기기 복구 정보를 확인할 수 없습니다")
+    admin = db.scalar(select(User).where(User.username == expected_username).with_for_update())
+    if admin is None or admin.role != "admin":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "관리자 기기 복구 정보를 확인할 수 없습니다")
+    db.execute(delete(PasskeyCredential).where(PasskeyCredential.user_id == admin.id))
+    db.execute(
+        update(AuthSession)
+        .where(AuthSession.user_id == admin.id, AuthSession.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
+    db.commit()
+    logger.info(
+        "Admin device recovery completed",
+        extra={"client_key_hash": hashlib.sha256(client_key.encode()).hexdigest()[:16]},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+protected = APIRouter(dependencies=[Depends(maintenance_current_user)])
 admin_users = APIRouter(prefix="/admin/users", dependencies=[Depends(require_admin)])
 
 

@@ -190,7 +190,7 @@ def test_managed_user_must_register_then_authenticate_with_one_passkey(monkeypat
         app.dependency_overrides.clear()
 
 
-def test_admin_can_reset_a_users_passkey_and_remains_password_only() -> None:
+def test_admin_can_register_a_passkey_then_reset_a_users_passkey(monkeypatch) -> None:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -233,6 +233,14 @@ def test_admin_can_reset_a_users_passkey_and_remains_password_only() -> None:
     )
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings
+    registration = type(
+        "Registration", (), {
+            "credential_id": b"admin-credential", "credential_public_key": b"public-key",
+            "sign_count": 1, "credential_device_type": "single_device",
+            "credential_backed_up": False,
+        },
+    )()
+    monkeypatch.setattr("app.services.passkeys.verify_registration", lambda **_: registration)
     try:
         with TestClient(app, client=("198.51.100.62", 50000)) as client:
             admin = client.post(
@@ -240,15 +248,24 @@ def test_admin_can_reset_a_users_passkey_and_remains_password_only() -> None:
                 json={"username": "admin", "password": "strong-admin-password"},
             )
             assert admin.status_code == 200
-            assert admin.json()["passkey_registration_required"] is False
+            assert admin.json()["passkey_registration_required"] is True
+            assert client.get("/api/v1/admin/users").status_code == 403
+            assert client.post("/api/v1/auth/passkeys/registration/options").status_code == 200
+            registered = client.post(
+                "/api/v1/auth/passkeys/registration/verify",
+                json={"credential": {"id": "YWRtaW4tY3JlZGVudGlhbA"}},
+            )
+            assert registered.status_code == 200
+            assert registered.json()["passkey_registration_required"] is False
             learner_id = client.get("/api/v1/admin/users").json()[0]["id"]
             reset = client.delete(f"/api/v1/admin/users/{learner_id}/passkey")
             assert reset.status_code == 204
             assert client.delete("/api/v1/admin/users/999999/passkey").status_code == 404
 
         with factory() as db:
-            assert db.scalar(select(PasskeyCredential)) is None
             learner_id = db.scalar(select(User.id).where(User.username == "learner"))
+            assert db.scalar(select(PasskeyCredential).where(PasskeyCredential.user_id == learner_id)) is None
+            assert db.scalar(select(PasskeyCredential).join(User).where(User.role == "admin")) is not None
             assert db.scalar(
                 select(AuthSession.revoked_at).where(AuthSession.user_id == learner_id)
             ) is not None
@@ -288,6 +305,79 @@ def test_passkey_auth_helpers_reject_invalid_or_expired_stages() -> None:
     with pytest.raises(HTTPException) as expired:
         expected_challenge(wrong_stage, "registration")
     assert expired.value.status_code == 409
+
+
+def test_admin_recovery_revokes_device_and_sessions_without_logging_in() -> None:
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine)
+    recovery_key = "offline-recovery-key-with-at-least-32-characters"
+    settings = Settings(
+        database_url="sqlite://", database_host="", database_name="",
+        database_user="", database_password="", initial_admin_username="admin",
+        initial_admin_password="strong-admin-password",
+        admin_recovery_key_hash=hash_password(recovery_key),
+        admin_recovery_rate_limit_requests=2,
+    )
+    with factory() as db:
+        admin = User(username="admin", password_hash=hash_password("ignored"), role="admin")
+        db.add(admin); db.flush()
+        db.add(PasskeyCredential(
+            user_id=admin.id, credential_id=b"admin-key", public_key=b"public-key",
+            transports_json=["internal"],
+        ))
+        db.add(AuthSession(
+            user_id=admin.id, token_hash="r" * 64, purpose="full",
+            expires_at=utcnow() + timedelta(minutes=30),
+        ))
+        db.commit()
+
+    def override_db() -> Iterator[Session]:
+        with factory() as db:
+            yield db
+
+    auth_api.RECOVERY_ATTEMPTS.clear()
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        with TestClient(app, client=("198.51.100.80", 50000)) as client:
+            invalid = client.post("/api/v1/auth/admin/recovery", json={
+                "username": "admin", "recovery_key": "x" * 32,
+            })
+            assert invalid.status_code == 401
+            recovered = client.post("/api/v1/auth/admin/recovery", json={
+                "username": "admin", "recovery_key": recovery_key,
+            })
+            assert recovered.status_code == 204
+            assert client.cookies.get("certexam_session") is None
+            limited = client.post("/api/v1/auth/admin/recovery", json={
+                "username": "different-name", "recovery_key": "y" * 32,
+            })
+            assert limited.status_code == 429
+            with factory() as db:
+                assert db.scalar(select(PasskeyCredential)) is None
+                assert db.scalar(select(AuthSession.revoked_at).where(AuthSession.token_hash == "r" * 64)) is not None
+            login = client.post("/api/v1/auth/login", json={
+                "username": "admin", "password": "strong-admin-password",
+            })
+            assert login.status_code == 200
+            assert login.json()["passkey_registration_required"] is True
+        with factory() as db:
+            assert db.scalar(select(PasskeyCredential)) is None
+    finally:
+        auth_api.RECOVERY_ATTEMPTS.clear()
+        app.dependency_overrides.clear()
+
+
+def test_admin_recovery_rate_limit_is_bounded() -> None:
+    auth_api.RECOVERY_ATTEMPTS.clear()
+    assert auth_api.recovery_allowed("client:admin", 1, 900) == (True, 0)
+    allowed, retry_after = auth_api.recovery_allowed("client:admin", 1, 900)
+    assert allowed is False
+    assert retry_after > 0
+    auth_api.RECOVERY_ATTEMPTS.clear()
 
 
 def test_authentication_edge_cases_and_auth_module_coverage(monkeypatch) -> None:
@@ -349,6 +439,40 @@ def test_authentication_edge_cases_and_auth_module_coverage(monkeypatch) -> None
                 (session, user), db, settings,
             )
         assert duplicate_key.value.status_code == 409
+
+        recovering_user = User(
+            username="recovering-admin", password_hash=hash_password("temporary-password"),
+            role="admin",
+        )
+        db.add(recovering_user); db.flush()
+        recovering_session = AuthSession(
+            user_id=recovering_user.id, token_hash="z" * 64,
+            purpose="passkey_registration",
+            expires_at=utcnow() + timedelta(minutes=30),
+        )
+        db.add(recovering_session)
+        recovering_session.challenge = "AQ"
+        recovering_session.challenge_type = "registration"
+        recovering_session.challenge_expires_at = utcnow() + timedelta(minutes=1)
+        recovering_session.revoked_at = utcnow()
+        db.commit()
+        unique = type(
+            "Registration", (), {
+                "credential_id": b"credential-after-recovery",
+                "credential_public_key": b"public-key", "sign_count": 0,
+                "credential_device_type": "single_device", "credential_backed_up": False,
+            },
+        )()
+        monkeypatch.setattr(passkeys, "verify_registration", lambda **_: unique)
+        with pytest.raises(HTTPException) as recovered_during_registration:
+            auth_api.passkey_registration_verify(
+                PasskeyCredentialRequest(credential={"id": "credential-after-recovery"}),
+                (recovering_session, recovering_user), db, settings,
+            )
+        assert recovered_during_registration.value.status_code == 409
+        assert db.scalar(select(PasskeyCredential).where(
+            PasskeyCredential.user_id == recovering_user.id
+        )) is None
 
         consume_challenge = auth_api.consume_authentication_challenge
         decode_challenge = auth_api.base64url_to_bytes

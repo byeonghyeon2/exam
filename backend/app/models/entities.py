@@ -134,6 +134,9 @@ class StudySessionRecord(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     retry_of_session_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    pending_question_id: Mapped[int | None] = mapped_column(ForeignKey(f"{table_name('questions')}.id"), index=True)
+    pending_selected_answers_json: Mapped[list[str] | None] = mapped_column(JSON)
+    pending_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class StudyAttempt(Base):
@@ -305,3 +308,27 @@ class PasskeyChallenge(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Notice(Base, TimestampMixin):
+    __tablename__ = table_name("notices")
+    __table_args__ = (
+        Index("ix_notices_active_display", "is_published", "display_start_at", "display_end_at"),
+        Index("ix_notices_maintenance", "notice_type", "maintenance_start_at", "maintenance_end_at"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    notice_type: Mapped[str] = mapped_column(String(16), default="general", index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    content: Mapped[str] = mapped_column(Text)
+    display_start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    display_end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    maintenance_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    maintenance_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    maintenance_screen_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    title_color: Mapped[str] = mapped_column(String(16), default="default")
+    content_color: Mapped[str] = mapped_column(String(16), default="default")
+    title_weight: Mapped[str] = mapped_column(String(16), default="bold")
+    content_weight: Mapped[str] = mapped_column(String(16), default="normal")
+    is_published: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    maintenance_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revision: Mapped[int] = mapped_column(Integer, default=1)

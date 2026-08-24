@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.v1.auth import current_user, require_admin
+from app.api.v1.auth import (
+    current_user,
+    maintenance_current_user,
+    reject_learner_during_maintenance,
+    require_admin,
+)
 from app.classifiers.domain_classifier import classify_questions
 from app.classifiers.domain_classifier import report as classification_report
 from app.core.config import Settings, get_settings
@@ -37,7 +42,7 @@ from app.services.ai import AIOutputError, AIUnavailableError, build_ai_adapter
 from app.services.allocation import allocate_by_domain
 from app.services.scoring import percentage, scaled_score, score_answer
 
-router = APIRouter(dependencies=[Depends(current_user)])
+router = APIRouter(dependencies=[Depends(maintenance_current_user)])
 Db = Annotated[Session, Depends(get_db)]
 CurrentUser = Annotated[User | None, Depends(current_user)]
 
@@ -46,8 +51,16 @@ def owner_id(user: User | None) -> int:
     return user.id if user is not None else 0
 
 
+def recheck_maintenance(db: Session, user: User | None) -> None:
+    if user is not None:
+        reject_learner_during_maintenance(db, user)
+
+
 def get_study_record(db: Session, session_id: str, user: User | None) -> StudySessionRecord:
-    record = db.scalar(select(StudySessionRecord).where(StudySessionRecord.session_id == session_id, StudySessionRecord.user_id == owner_id(user)))
+    record = db.scalar(select(StudySessionRecord).where(
+        StudySessionRecord.session_id == session_id,
+        StudySessionRecord.user_id == owner_id(user),
+    ).with_for_update())
     if record is None:
         raise HTTPException(404, "Study session not found")
     return record
@@ -65,6 +78,22 @@ def get_question(db: Session, question_id: int) -> Question:
     if not question:
         raise HTTPException(404, "Question not found")
     return question
+
+
+def validate_answer_selection(
+    question: Question, selected_answers: list[str], *, allow_partial: bool = False
+) -> None:
+    if len(selected_answers) != len(set(selected_answers)):
+        raise HTTPException(422, "같은 선택지를 중복 선택할 수 없습니다")
+    valid_keys = {choice.choice_key for choice in question.choices}
+    if not set(selected_answers) <= valid_keys:
+        raise HTTPException(422, "문제에 없는 선택지가 포함되어 있습니다")
+    required = question.required_answer_count
+    if allow_partial:
+        if len(selected_answers) > required:
+            raise HTTPException(422, f"선택지는 최대 {required}개까지 고를 수 있습니다")
+    elif len(selected_answers) != required:
+        raise HTTPException(422, f"선택지를 {required}개 선택해야 합니다")
 
 
 def may_access_explanation(db: Session, user: User | None, question_id: int) -> bool:
@@ -126,12 +155,19 @@ def domains(code: str, db: Db) -> list[Domain]:
 
 @router.post("/study/sessions", response_model=StudySessionOut, status_code=201)
 def create_study(payload: StudySessionCreate, db: Db, user: CurrentUser) -> StudySessionOut:
+    recheck_maintenance(db, user)
     repo = ExamRepository(db); cert = repo.certification(payload.certification_code)
     if not cert or not cert.is_active: raise HTTPException(404, "Certification not found")
     domain = repo.domain_by_code(cert.id, payload.domain_code) if payload.domain_code else None
     if payload.domain_code and not domain: raise HTTPException(404, "Domain not found")
     pool = repo.eligible_questions(cert.id, domain.id if domain else None)
-    rng = random.Random(payload.seed); rng.shuffle(pool)
+    attempted_question_ids = set(db.scalars(select(StudyAttempt.question_id).where(
+        StudyAttempt.user_id == owner_id(user)
+    )))
+    unseen = [question for question in pool if question.id not in attempted_question_ids]
+    seen = [question for question in pool if question.id in attempted_question_ids]
+    rng = random.Random(payload.seed); rng.shuffle(unseen); rng.shuffle(seen)
+    pool = unseen + seen
     question_count = len(pool) if payload.question_count is None else payload.question_count
     if not pool: raise HTTPException(409, "No eligible questions in the selected domain")
     if len(pool) < question_count: raise HTTPException(409, "Insufficient verified questions")
@@ -353,16 +389,47 @@ def delete_study_history(session_id: str, db: Db, user: CurrentUser) -> dict[str
 @router.post("/study/questions/{question_id}/submit", response_model=AnswerResult)
 def submit_study(question_id: int, payload: SubmitAnswer, db: Db, user: CurrentUser, session_id: str = Query(...)) -> AnswerResult:
     record = get_study_record(db, session_id, user)
+    recheck_maintenance(db, user)
     if record.status != "in_progress" or question_id not in record.question_ids_json: raise HTTPException(409, "Question is not assigned to an active session")
     existing = db.scalar(select(StudyAttempt).where(StudyAttempt.session_id == session_id, StudyAttempt.user_id == owner_id(user), StudyAttempt.question_id == question_id))
     if existing: raise HTTPException(409, "Question already answered in this session")
-    question = get_question(db, question_id); answers = current_answers(question); correct = score_answer(payload.selected_answers, answers)
-    db.add(StudyAttempt(user_id=owner_id(user), session_id=session_id, question_id=question_id, selected_answers_json=payload.selected_answers, is_correct=correct)); db.commit()
+    question = get_question(db, question_id)
+    validate_answer_selection(question, payload.selected_answers)
+    answers = current_answers(question); correct = score_answer(payload.selected_answers, answers)
+    db.add(StudyAttempt(user_id=owner_id(user), session_id=session_id, question_id=question_id, selected_answers_json=payload.selected_answers, is_correct=correct))
+    if record.pending_question_id == question_id:
+        record.pending_question_id = None; record.pending_selected_answers_json = None; record.pending_updated_at = None
+    db.commit()
     return AnswerResult(correct=correct, selected_answers=payload.selected_answers, correct_answers=answers)
+
+
+@router.put("/study/sessions/{session_id}/draft", status_code=204)
+def save_study_draft(session_id: str, payload: StudyDraftUpdate, db: Db, user: CurrentUser) -> None:
+    record = get_study_record(db, session_id, user)
+    recheck_maintenance(db, user)
+    if record.status != "in_progress" or payload.question_id not in record.question_ids_json:
+        raise HTTPException(409, "Question is not assigned to an active session")
+    if db.scalar(select(StudyAttempt.id).where(
+        StudyAttempt.session_id == session_id, StudyAttempt.user_id == owner_id(user),
+        StudyAttempt.question_id == payload.question_id,
+    )) is not None:
+        raise HTTPException(409, "Question already answered in this session")
+    question = get_question(db, payload.question_id)
+    validate_answer_selection(question, payload.selected_answers, allow_partial=True)
+    if payload.selected_answers:
+        record.pending_question_id = payload.question_id
+        record.pending_selected_answers_json = payload.selected_answers
+        record.pending_updated_at = utcnow()
+    else:
+        record.pending_question_id = None
+        record.pending_selected_answers_json = None
+        record.pending_updated_at = None
+    db.commit()
 
 
 @router.post("/mock-exams", status_code=201)
 def create_mock(payload: MockExamCreate, db: Db, user: CurrentUser) -> dict[str, Any]:
+    recheck_maintenance(db, user)
     if payload.certification_code != "DEA-C01": raise HTTPException(409, "Only DEA-C01 is enabled in phase 1")
     repo = ExamRepository(db); cert = repo.certification(payload.certification_code)
     if not cert: raise HTTPException(404, "Certification not found")
@@ -380,8 +447,11 @@ def create_mock(payload: MockExamCreate, db: Db, user: CurrentUser) -> dict[str,
 
 
 def get_exam(db: Session, exam_id: int, user: User | None) -> MockExam:
-    exam = db.scalar(select(MockExam).where(MockExam.id == exam_id, MockExam.user_id == owner_id(user)).options(selectinload(MockExam.questions)))
+    exam = db.scalar(select(MockExam).where(
+        MockExam.id == exam_id, MockExam.user_id == owner_id(user)
+    ).options(selectinload(MockExam.questions)).with_for_update())
     if not exam: raise HTTPException(404, "Mock exam not found")
+    recheck_maintenance(db, user)
     return exam
 
 
