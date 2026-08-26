@@ -43,6 +43,7 @@ describe('Passkey-first login', () => {
     ]);
     await userEvent.click(screen.getByRole('button',{name:'최초 기기 등록'}));
     expect(screen.getByText('관리자가 발급한 계정으로 진행하세요.')).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/관리자 로그인/})).not.toBeInTheDocument();
     expect(screen.queryByText(/admin 계정/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button',{name:'관리자 기기 복구'})).not.toBeInTheDocument();
     expect(screen.queryByRole('button',{name:'관리자 기기 초기화'})).not.toBeInTheDocument();
@@ -64,19 +65,15 @@ describe('Passkey-first login', () => {
     expect(onAuthenticated).toHaveBeenCalledTimes(1);
   });
 
-  it('logs the environment administrator in directly with web credentials',async()=>{
+  it('logs the environment administrator in from the existing initial-device form',async()=>{
     vi.spyOn(endpoints,'login').mockResolvedValue(authenticatedAdmin);
     const onAuthenticated=vi.fn();
     const client=renderLogin(onAuthenticated);
 
-    await userEvent.click(screen.getByRole('button',{name:'관리자 로그인'}));
-    expect(screen.getByLabelText('관리자 아이디')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button',{name:'관리자 로그인 닫기'}));
-    expect(screen.queryByLabelText('관리자 아이디')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button',{name:'관리자 로그인'}));
-    await userEvent.type(screen.getByLabelText('관리자 아이디'),'admin');
-    await userEvent.type(screen.getByLabelText('관리자 비밀번호'),'strong-admin-password');
-    await userEvent.click(screen.getByRole('button',{name:'로그인'}));
+    await userEvent.click(screen.getByRole('button',{name:'최초 기기 등록'}));
+    await userEvent.type(screen.getByLabelText('아이디'),'admin');
+    await userEvent.type(screen.getByLabelText('임시 비밀번호'),'strong-admin-password');
+    await userEvent.click(screen.getByRole('button',{name:'기기 등록 계속'}));
 
     expect(endpoints.login).toHaveBeenCalledWith('admin','strong-admin-password');
     await waitFor(()=>expect(client.getQueryData(['me'])).toEqual(authenticatedAdmin));

@@ -6,7 +6,7 @@ import { passkeyErrorMessage, startPasskeyAuthentication } from '../auth/passkey
 
 export function Login({ onAuthenticated }: { onAuthenticated?: () => void }) {
   const client = useQueryClient();
-  const [credentialMode,setCredentialMode]=useState<'admin'|'registration'|null>(null);
+  const [showRegistration, setShowRegistration] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const passkey = useMutation({
@@ -44,18 +44,15 @@ export function Login({ onAuthenticated }: { onAuthenticated?: () => void }) {
     <button className="button" disabled={passkey.isPending || registration.isPending} onClick={() => passkey.mutate()}>
       <Fingerprint size={20} />{passkey.isPending ? '인증 확인 중…' : 'Passkey로 로그인'}
     </button>
-    <button className="passkey-logout" disabled={passkey.isPending || registration.isPending} onClick={()=>setCredentialMode(current=>current==='admin'?null:'admin')}>
-      {credentialMode==='admin'?'관리자 로그인 닫기':'관리자 로그인'}
+    <button className="passkey-logout" disabled={passkey.isPending || registration.isPending} onClick={() => setShowRegistration(value => !value)}>
+      {showRegistration ? '등록 입력 닫기' : '최초 기기 등록'}
     </button>
-    <button className="passkey-logout" disabled={passkey.isPending || registration.isPending} onClick={()=>setCredentialMode(current=>current==='registration'?null:'registration')}>
-      {credentialMode==='registration'?'등록 입력 닫기':'최초 기기 등록'}
-    </button>
-    {credentialMode && <form onSubmit={submitRegistration}>
-      <p className="muted">{credentialMode==='admin'?'환경파일에 설정된 관리자 계정으로 로그인하세요.':'관리자가 발급한 계정으로 진행하세요.'}</p>
-      <label>{credentialMode==='admin'?'관리자 아이디':'아이디'}<input value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" required minLength={3} /></label>
-      <label>{credentialMode==='admin'?'관리자 비밀번호':'임시 비밀번호'}<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required minLength={8} /></label>
+    {showRegistration && <form onSubmit={submitRegistration}>
+      <p className="muted">관리자가 발급한 계정으로 진행하세요.</p>
+      <label>아이디<input value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" required minLength={3} /></label>
+      <label>임시 비밀번호<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required minLength={8} /></label>
       {registration.isError && <p className="form-error" role="alert">{registration.error.message}</p>}
-      <button className="button" disabled={registration.isPending}>{registration.isPending?'확인 중…':credentialMode==='admin'?'로그인':'기기 등록 계속'}</button>
+      <button className="button" disabled={registration.isPending}>{registration.isPending ? '확인 중…' : '기기 등록 계속'}</button>
     </form>}
   </section></main>;
 }
