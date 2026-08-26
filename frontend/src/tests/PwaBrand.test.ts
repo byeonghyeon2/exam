@@ -36,4 +36,16 @@ describe('합격비서 installable PWA', () => {
       expect(png.readUInt32BE(20)).toBe(size);
     }
   });
+
+  it('self-hosts application fonts so the production CSP cannot change typography', () => {
+    const main = readFileSync(resolve(root, 'src/main.tsx'), 'utf8');
+    const styles = readFileSync(resolve(root, 'src/styles.css'), 'utf8');
+    const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+
+    expect(styles).not.toMatch(/https?:\/\/fonts\.(googleapis|gstatic)\.com/);
+    expect(main).toContain("import '@fontsource-variable/dm-sans';");
+    expect(main).toContain("import '@fontsource-variable/noto-sans-kr';");
+    expect(packageJson.dependencies).toHaveProperty('@fontsource-variable/dm-sans');
+    expect(packageJson.dependencies).toHaveProperty('@fontsource-variable/noto-sans-kr');
+  });
 });
