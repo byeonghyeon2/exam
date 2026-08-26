@@ -4,3 +4,5 @@ All application endpoints are rooted at `/api/v1`; interactive OpenAPI documenta
 
 Managed users call `POST /auth/login` only for first-device registration. The environment-owned administrator uses the same endpoint for direct web login and receives a full session after `INITIAL_ADMIN_USERNAME`/`INITIAL_ADMIN_PASSWORD` verification. Discoverable Passkey login uses public `POST /auth/passkeys/authentication/options` followed by `POST /auth/passkeys/authentication/verify`; the challenge cookie and database record are short-lived and single use. Admin can reset only authentication material with `DELETE /admin/users/{id}/passkey`, or delete a regular user and that user's learning data with `DELETE /admin/users/{id}`. System admin deletion is rejected.
 
+Admin problem-management reads `certification_code` on `GET /admin/reports`, `GET /admin/classification/report`, and `GET /admin/mock-exam-readiness`. Readiness and `POST /mock-exams` use the selected active certification's metadata and every active domain whose exam weight is greater than zero; no certification code or domain count is fixed in the API.
+

@@ -430,15 +430,19 @@ def save_study_draft(session_id: str, payload: StudyDraftUpdate, db: Db, user: C
 @router.post("/mock-exams", status_code=201)
 def create_mock(payload: MockExamCreate, db: Db, user: CurrentUser) -> dict[str, Any]:
     recheck_maintenance(db, user)
-    if payload.certification_code != "DEA-C01": raise HTTPException(409, "Only DEA-C01 is enabled in phase 1")
     repo = ExamRepository(db); cert = repo.certification(payload.certification_code)
-    if not cert: raise HTTPException(404, "Certification not found")
+    if not cert or not cert.is_active: raise HTTPException(404, "Certification not found")
     count = payload.question_count or cert.default_question_count
-    domains = list(db.scalars(select(Domain).where(Domain.certification_id == cert.id, Domain.is_active.is_(True), Domain.domain_code.in_(["DEA-D1", "DEA-D2", "DEA-D3", "DEA-D4"]))))
+    domains = list(db.scalars(select(Domain).where(
+        Domain.certification_id == cert.id,
+        Domain.is_active.is_(True),
+        Domain.exam_weight > 0,
+    ).order_by(Domain.sort_order)))
+    if not domains: raise HTTPException(409, "Certification has no active exam domains")
     eligible = repo.eligible_questions(cert.id)
     try: allocation = allocate_by_domain(eligible, {d.id: d.exam_weight for d in domains}, count, payload.seed, allow_fallback=False)
     except ValueError as exc:
-        readiness = mock_exam_readiness(db)
+        readiness = mock_exam_readiness(db, cert.certification_code)
         raise HTTPException(409, {"message": str(exc), "readiness": readiness}) from exc
     duration = payload.duration_minutes or cert.default_duration_minutes; now = utcnow()
     exam = MockExam(user_id=owner_id(user), certification_id=cert.id, question_count=count, duration_minutes=duration, expires_at=now + timedelta(minutes=duration), passing_score=cert.passing_score)
@@ -641,11 +645,18 @@ def generate_explanation(question_id: int, payload: ExplanationGenerate, db: Db,
 admin = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
 
-def mock_exam_readiness(db: Session) -> dict[str, Any]:
-    cert = db.scalar(select(Certification).where(Certification.certification_code == "DEA-C01"))
+def mock_exam_readiness(db: Session, certification_code: str) -> dict[str, Any]:
+    cert = db.scalar(select(Certification).where(
+        Certification.certification_code == certification_code,
+        Certification.is_active.is_(True),
+    ))
     if cert is None:
-        return {"ready": False, "reason": "DEA-C01 metadata is missing", "domains": []}
-    official = list(db.scalars(select(Domain).where(Domain.certification_id == cert.id, Domain.domain_code.in_(["DEA-D1", "DEA-D2", "DEA-D3", "DEA-D4"])).order_by(Domain.sort_order)))
+        raise HTTPException(404, "Certification not found")
+    official = list(db.scalars(select(Domain).where(
+        Domain.certification_id == cert.id,
+        Domain.is_active.is_(True),
+        Domain.exam_weight > 0,
+    ).order_by(Domain.sort_order)))
     eligible = ExamRepository(db).eligible_questions(cert.id)
     available = {domain.id: sum(1 for question in eligible if question.domain_id == domain.id) for domain in official}
     total_weight = sum(domain.exam_weight for domain in official) or 1
@@ -654,9 +665,21 @@ def mock_exam_readiness(db: Session) -> dict[str, Any]:
     remaining = cert.default_question_count - sum(required.values())
     for domain in sorted(official, key=lambda item: exact[item.id] - required[item.id], reverse=True)[:remaining]:
         required[domain.id] += 1
-    details = [{"domain_code": domain.domain_code, "required": required[domain.id], "available": available[domain.id], "shortage": max(0, required[domain.id] - available[domain.id])} for domain in official]
-    unclassified = db.scalar(select(func.count(Question.id)).join(Domain, Question.domain_id == Domain.id).where(Question.certification_id == cert.id, Domain.domain_code == "DEA-UNCLASSIFIED", Question.is_active.is_(True))) or 0
-    return {"ready": len(official) == 4 and all(item["shortage"] == 0 for item in details), "question_count": cert.default_question_count, "unclassified": unclassified, "domains": details}
+    details = [{
+        "domain_code": domain.domain_code,
+        "name_ko": domain.name_ko,
+        "name_en": domain.name_en,
+        "required": required[domain.id],
+        "available": available[domain.id],
+        "shortage": max(0, required[domain.id] - available[domain.id]),
+    } for domain in official]
+    return {
+        "certification_code": cert.certification_code,
+        "certification_name": cert.name_ko or cert.name_en,
+        "ready": bool(official) and all(item["shortage"] == 0 for item in details),
+        "question_count": cert.default_question_count,
+        "domains": details,
+    }
 
 
 @admin.get("/dashboard")
@@ -672,8 +695,34 @@ def unclassified_questions(db: Db, page: int = Query(1, ge=1), page_size: int = 
 
 
 @admin.get("/classification/report")
-def get_classification_report(db: Db) -> dict[str, Any]:
-    return classification_report(db, "DEA-C01")
+def get_classification_report(
+    db: Db, certification_code: str = Query(..., min_length=1, max_length=64)
+) -> dict[str, Any]:
+    try:
+        summary = classification_report(db, certification_code)
+    except ValueError as exc:
+        raise HTTPException(404, "Certification not found") from exc
+    certification = db.scalar(select(Certification).where(
+        Certification.certification_code == certification_code,
+        Certification.is_active.is_(True),
+    ))
+    if certification is None:
+        raise HTTPException(404, "Certification not found")
+    domains = list(db.scalars(select(Domain).where(
+        Domain.certification_id == certification.id,
+        Domain.is_active.is_(True),
+        Domain.exam_weight > 0,
+    ).order_by(Domain.sort_order)))
+    return {
+        **summary,
+        "certification_name": certification.name_ko or certification.name_en,
+        "domains": [{
+            "domain_code": domain.domain_code,
+            "name_ko": domain.name_ko,
+            "name_en": domain.name_en,
+            "count": summary["domain_counts"].get(domain.domain_code, 0),
+        } for domain in domains],
+    }
 
 
 @admin.post("/classification/run")
@@ -694,8 +743,10 @@ def manual_domain(question_id: int, payload: ManualDomainUpdate, db: Db) -> dict
 
 
 @admin.get("/mock-exam-readiness")
-def readiness(db: Db) -> dict[str, Any]:
-    return mock_exam_readiness(db)
+def readiness(
+    db: Db, certification_code: str = Query(..., min_length=1, max_length=64)
+) -> dict[str, Any]:
+    return mock_exam_readiness(db, certification_code)
 
 
 @admin.get("/questions")
@@ -769,9 +820,20 @@ def import_job(job_id: int, db: Db) -> ImportJob:
 
 
 @admin.get("/reports", response_model=list[AdminReportOut])
-def reports(db: Db, report_status: str | None = Query(None, alias="status")) -> list[AdminReportOut]:
+def reports(
+    db: Db,
+    report_status: str | None = Query(None, alias="status"),
+    certification_code: str | None = Query(None, min_length=1, max_length=64),
+) -> list[AdminReportOut]:
     stmt = select(QuestionReport, Question).join(Question, QuestionReport.question_id == Question.id).order_by(QuestionReport.created_at.desc())
     if report_status: stmt = stmt.where(QuestionReport.status == report_status)
+    if certification_code:
+        certification = db.scalar(select(Certification).where(
+            Certification.certification_code == certification_code,
+            Certification.is_active.is_(True),
+        ))
+        if certification is None: raise HTTPException(404, "Certification not found")
+        stmt = stmt.where(Question.certification_id == certification.id)
     return [
         AdminReportOut(
             id=item.id,

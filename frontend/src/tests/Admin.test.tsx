@@ -13,6 +13,10 @@ function renderAdmin(Page=AdminUsers) {
 }
 
 function mockAdminData() {
+  vi.spyOn(endpoints, 'certifications').mockResolvedValue([
+    {code:'DEA-C01',name_ko:'AWS 데이터 엔지니어',name_en:'AWS Data Engineer',exam_version:'DEA-C01',default_question_count:65,default_duration_minutes:130,passing_score:720},
+    {code:'SNOW-CORE',name_ko:'스노우프로 코어',name_en:'SnowPro Core',exam_version:'SNOW-CORE',default_question_count:5,default_duration_minutes:115,passing_score:750},
+  ]);
   vi.spyOn(endpoints, 'adminDashboard').mockResolvedValue({ questions: 295, verified: 295 });
   vi.spyOn(endpoints, 'users').mockResolvedValue([{
     id: 1, username: 'user', role: 'user', is_active: true,
@@ -27,24 +31,29 @@ function mockAdminData() {
     created_at: '2026-08-12T00:14:22Z', resolved_at: null,
   }]);
   vi.spyOn(endpoints, 'mockReadiness').mockResolvedValue({
-    ready: true, question_count: 65, unclassified: 0,
+    certification_code:'DEA-C01',certification_name:'AWS 데이터 엔지니어',ready: true, question_count: 65,
     domains: [
-      { domain_code: 'DEA-D1', required: 22, available: 106, shortage: 0 },
-      { domain_code: 'DEA-D2', required: 17, available: 76, shortage: 0 },
-      { domain_code: 'DEA-D3', required: 14, available: 64, shortage: 0 },
-      { domain_code: 'DEA-D4', required: 12, available: 49, shortage: 0 },
+      { domain_code: 'DEA-D1',name_ko:'수집 및 변환',name_en:'Ingestion', required: 22, available: 106, shortage: 0 },
+      { domain_code: 'DEA-D2',name_ko:'데이터 저장소',name_en:'Storage', required: 17, available: 76, shortage: 0 },
+      { domain_code: 'DEA-D3',name_ko:'운영 및 지원',name_en:'Operations', required: 14, available: 64, shortage: 0 },
+      { domain_code: 'DEA-D4',name_ko:'보안 및 거버넌스',name_en:'Security', required: 12, available: 49, shortage: 0 },
     ],
   });
   vi.spyOn(endpoints, 'classificationReport').mockResolvedValue({
-    certification: 'DEA-C01', domain_counts: { 'DEA-D1': 106, 'DEA-D2': 76, 'DEA-D3': 64, 'DEA-D4': 49 }, status_counts: {},
+    certification: 'DEA-C01',certification_name:'AWS 데이터 엔지니어',domain_counts: { 'DEA-D1': 106, 'DEA-D2': 76, 'DEA-D3': 64, 'DEA-D4': 49 }, status_counts: {},
+    domains:[
+      {domain_code:'DEA-D1',name_ko:'수집 및 변환',name_en:'Ingestion',count:106},
+      {domain_code:'DEA-D2',name_ko:'데이터 저장소',name_en:'Storage',count:76},
+      {domain_code:'DEA-D3',name_ko:'운영 및 지원',name_en:'Operations',count:64},
+      {domain_code:'DEA-D4',name_ko:'보안 및 거버넌스',name_en:'Security',count:49},
+    ],
   });
-  vi.spyOn(endpoints, 'unclassified').mockResolvedValue({ items: [], total: 0 });
 }
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('Admin mobile layout', () => {
-  it('renders account data with mobile labels and avoids an empty unclassified table', async () => {
+  it('renders account data with mobile labels and removes the unclassified area', async () => {
     mockAdminData();
     renderAdmin();
 
@@ -63,14 +72,44 @@ describe('Admin mobile layout', () => {
     expect(confirm).toHaveBeenLastCalledWith('user 계정을 삭제하시겠습니까?\n학습 기록과 인증 정보가 모두 삭제되며 복구할 수 없습니다.');
     await waitFor(() => expect(endpoints.deleteUser).toHaveBeenCalledWith(1));
     await waitFor(() => expect(alert).toHaveBeenCalledWith('계정이 삭제되었습니다.'));
+    cleanup();
     renderAdmin(AdminQuestions);
-    expect(await screen.findByText('미분류 문제가 없습니다.')).toBeInTheDocument();
+    await waitFor(()=>expect(screen.getByLabelText('관리할 자격증')).toHaveValue('DEA-C01'));
+    expect(screen.queryByText('DEA-UNCLASSIFIED')).not.toBeInTheDocument();
+    expect(screen.queryByText(/미분류 활성 문제/)).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '상태/신뢰도' })).not.toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: '사용 가능' })).toBeInTheDocument();
+    expect(await screen.findByRole('columnheader', { name: '사용 가능' })).toBeInTheDocument();
     const reports = within(screen.getByRole('heading', { name: '문제 신고' }).closest('section')!);
     expect(reports.getByRole('columnheader', { name: '접수 시각' })).toHaveClass('report-time');
     expect(reports.getByRole('columnheader', { name: '유형' })).toHaveClass('report-type');
     expect(reports.queryByRole('columnheader', { name: '상태' })).not.toBeInTheDocument();
+  });
+
+  it('loads problem counts, reports, and readiness for a newly added certification',async()=>{
+    mockAdminData();
+    vi.mocked(endpoints.classificationReport).mockImplementation(async code=>code==='SNOW-CORE'?{
+      certification:'SNOW-CORE',certification_name:'스노우프로 코어',domain_counts:{'SNOW-STORAGE':3,'SNOW-SECURITY':2},status_counts:{},
+      domains:[
+        {domain_code:'SNOW-STORAGE',name_ko:'스토리지',name_en:'Storage',count:3},
+        {domain_code:'SNOW-SECURITY',name_ko:'보안',name_en:'Security',count:2},
+      ],
+    }:{certification:'DEA-C01',certification_name:'AWS 데이터 엔지니어',domain_counts:{} as Record<string,number>,status_counts:{},domains:[]});
+    vi.mocked(endpoints.mockReadiness).mockImplementation(async code=>({
+      certification_code:code,certification_name:code==='SNOW-CORE'?'스노우프로 코어':'AWS 데이터 엔지니어',ready:true,question_count:code==='SNOW-CORE'?5:65,
+      domains:code==='SNOW-CORE'?[{domain_code:'SNOW-STORAGE',name_ko:'스토리지',name_en:'Storage',required:3,available:3,shortage:0},{domain_code:'SNOW-SECURITY',name_ko:'보안',name_en:'Security',required:2,available:2,shortage:0}]:[],
+    }));
+    vi.mocked(endpoints.adminReports).mockImplementation(async code=>code==='SNOW-CORE'?[{
+      id:8,question_id:200,question_uid:'SNOW-001',question_ko:'Snow 문제',question_en:'Snow question',report_type:'other',description:'Snow 신고',status:'received',resolution_note:null,created_at:'2026-08-12T00:14:22Z',resolved_at:null,
+    }]:[]);
+    renderAdmin(AdminQuestions);
+    const selector=await screen.findByLabelText('관리할 자격증');
+    await waitFor(()=>expect(within(selector).getByRole('option',{name:/스노우프로 코어/})).toBeInTheDocument());
+    await userEvent.selectOptions(selector,'SNOW-CORE');
+    expect((await screen.findAllByText('스토리지')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Snow 신고')).toBeInTheDocument();
+    expect(endpoints.classificationReport).toHaveBeenLastCalledWith('SNOW-CORE');
+    expect(endpoints.mockReadiness).toHaveBeenLastCalledWith('SNOW-CORE');
+    expect(endpoints.adminReports).toHaveBeenLastCalledWith('SNOW-CORE');
   });
 
   it('keeps the admin landing page concise and links to each management area', async()=>{
@@ -90,12 +129,17 @@ describe('Admin mobile layout', () => {
     const create=vi.spyOn(endpoints,'createNotice').mockImplementation(async body=>({id:1,updated_at:new Date().toISOString(),...body}));
     renderAdmin(AdminNotices);
     await screen.findByText('등록된 공지가 없습니다.');
+    expect(screen.getByRole('heading',{name:'기본 정보'})).toBeInTheDocument();
+    expect(screen.getByRole('heading',{name:'노출 일정'})).toBeInTheDocument();
+    expect(screen.getByRole('heading',{name:'스타일 및 게시'})).toBeInTheDocument();
+    expect(screen.getByRole('heading',{name:'공지 미리보기'})).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText('공지 유형'),'maintenance');
     expect(screen.getByLabelText('점검 화면 표출')).not.toBeChecked();
     expect(screen.queryByLabelText('점검 화면 시작')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('점검 화면 종료')).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('제목'),'점검 안내');
     await userEvent.type(screen.getByLabelText('내용'),'점검 예정 안내입니다.');
+    expect(screen.getByLabelText('공지 미리보기')).toHaveTextContent('점검 안내');
     await userEvent.type(screen.getByLabelText('팝업 시작'),'2026-08-25T09:00');
     await userEvent.type(screen.getByLabelText('팝업 종료'),'2026-08-30T02:00');
     await userEvent.click(screen.getByRole('button',{name:'공지 등록'}));
