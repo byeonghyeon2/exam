@@ -402,7 +402,7 @@ def test_maintenance_api_blocks_learner_keeps_admin_and_finalizes_current_user()
         application.dependency_overrides.clear()
 
 
-def test_active_maintenance_rejects_new_learner_login_but_allows_admin_registration() -> None:
+def test_active_maintenance_rejects_new_learner_login_but_allows_admin_web_login() -> None:
     factory = _factory()
     now = utcnow()
     with factory() as db:
@@ -438,6 +438,8 @@ def test_active_maintenance_rejects_new_learner_login_but_allows_admin_registrat
                 "username": "admin", "password": "admin-password",
             })
             assert admin.status_code == 200
-            assert admin.json()["passkey_registration_required"] is True
+            assert admin.json()["passkey_registration_required"] is False
+            assert admin.json()["passkey_authentication_required"] is False
+            assert client.get("/api/v1/admin/users").status_code == 200
     finally:
         application.dependency_overrides.clear()

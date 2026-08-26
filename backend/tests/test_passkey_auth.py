@@ -190,7 +190,7 @@ def test_managed_user_must_register_then_authenticate_with_one_passkey(monkeypat
         app.dependency_overrides.clear()
 
 
-def test_admin_can_register_a_passkey_then_reset_a_users_passkey(monkeypatch) -> None:
+def test_admin_can_use_web_login_then_reset_a_users_passkey() -> None:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -233,14 +233,6 @@ def test_admin_can_register_a_passkey_then_reset_a_users_passkey(monkeypatch) ->
     )
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: settings
-    registration = type(
-        "Registration", (), {
-            "credential_id": b"admin-credential", "credential_public_key": b"public-key",
-            "sign_count": 1, "credential_device_type": "single_device",
-            "credential_backed_up": False,
-        },
-    )()
-    monkeypatch.setattr("app.services.passkeys.verify_registration", lambda **_: registration)
     try:
         with TestClient(app, client=("198.51.100.62", 50000)) as client:
             admin = client.post(
@@ -248,15 +240,9 @@ def test_admin_can_register_a_passkey_then_reset_a_users_passkey(monkeypatch) ->
                 json={"username": "admin", "password": "strong-admin-password"},
             )
             assert admin.status_code == 200
-            assert admin.json()["passkey_registration_required"] is True
-            assert client.get("/api/v1/admin/users").status_code == 403
-            assert client.post("/api/v1/auth/passkeys/registration/options").status_code == 200
-            registered = client.post(
-                "/api/v1/auth/passkeys/registration/verify",
-                json={"credential": {"id": "YWRtaW4tY3JlZGVudGlhbA"}},
-            )
-            assert registered.status_code == 200
-            assert registered.json()["passkey_registration_required"] is False
+            assert admin.json()["passkey_registration_required"] is False
+            assert admin.json()["passkey_authentication_required"] is False
+            assert client.get("/api/v1/admin/users").status_code == 200
             learner_id = client.get("/api/v1/admin/users").json()[0]["id"]
             reset = client.delete(f"/api/v1/admin/users/{learner_id}/passkey")
             assert reset.status_code == 204
@@ -265,7 +251,7 @@ def test_admin_can_register_a_passkey_then_reset_a_users_passkey(monkeypatch) ->
         with factory() as db:
             learner_id = db.scalar(select(User.id).where(User.username == "learner"))
             assert db.scalar(select(PasskeyCredential).where(PasskeyCredential.user_id == learner_id)) is None
-            assert db.scalar(select(PasskeyCredential).join(User).where(User.role == "admin")) is not None
+            assert db.scalar(select(PasskeyCredential).join(User).where(User.role == "admin")) is None
             assert db.scalar(
                 select(AuthSession.revoked_at).where(AuthSession.user_id == learner_id)
             ) is not None
@@ -363,7 +349,8 @@ def test_admin_recovery_revokes_device_and_sessions_without_logging_in() -> None
                 "username": "admin", "password": "strong-admin-password",
             })
             assert login.status_code == 200
-            assert login.json()["passkey_registration_required"] is True
+            assert login.json()["passkey_registration_required"] is False
+            assert login.json()["passkey_authentication_required"] is False
         with factory() as db:
             assert db.scalar(select(PasskeyCredential)) is None
     finally:

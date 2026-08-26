@@ -13,6 +13,7 @@ const authenticated: User = {
   passkey_registration_required: false, passkey_authentication_required: false,
   created_at: '2026-08-14T00:00:00Z', last_login_at: '2026-08-14T01:00:00Z',
 };
+const authenticatedAdmin:User={...authenticated,id:1,username:'admin',role:'admin',password_managed_by_environment:true};
 
 function renderLogin(onAuthenticated?: () => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -60,6 +61,25 @@ describe('Passkey-first login', () => {
     expect(endpoints.passkeyAuthenticationOptions).toHaveBeenCalled();
     expect(endpoints.verifyPasskeyAuthentication).toHaveBeenCalledWith({ id: 'credential' });
     await waitFor(() => expect(client.getQueryData(['me'])).toEqual(authenticated));
+    expect(onAuthenticated).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs the environment administrator in directly with web credentials',async()=>{
+    vi.spyOn(endpoints,'login').mockResolvedValue(authenticatedAdmin);
+    const onAuthenticated=vi.fn();
+    const client=renderLogin(onAuthenticated);
+
+    await userEvent.click(screen.getByRole('button',{name:'관리자 로그인'}));
+    expect(screen.getByLabelText('관리자 아이디')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'관리자 로그인 닫기'}));
+    expect(screen.queryByLabelText('관리자 아이디')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'관리자 로그인'}));
+    await userEvent.type(screen.getByLabelText('관리자 아이디'),'admin');
+    await userEvent.type(screen.getByLabelText('관리자 비밀번호'),'strong-admin-password');
+    await userEvent.click(screen.getByRole('button',{name:'로그인'}));
+
+    expect(endpoints.login).toHaveBeenCalledWith('admin','strong-admin-password');
+    await waitFor(()=>expect(client.getQueryData(['me'])).toEqual(authenticatedAdmin));
     expect(onAuthenticated).toHaveBeenCalledTimes(1);
   });
 

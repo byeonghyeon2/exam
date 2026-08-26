@@ -179,7 +179,7 @@ AUTH_RATE_LIMIT_REQUESTS=10
 AUTH_RATE_LIMIT_WINDOW_SECONDS=60
 ```
 
-최초 admin은 DB에 admin 역할 계정이 하나도 없을 때 첫 로그인 요청에서 생성됩니다. admin도 일반 계정과 동일하게 `INITIAL_ADMIN_PASSWORD`로 최초 등록 절차만 열고 Passkey 1개를 등록한 뒤에는 Passkey로만 로그인합니다. `INITIAL_ADMIN_PASSWORD`가 비어 있으면 최초 등록이나 복구 후 재등록을 진행할 수 없습니다.
+최초 admin은 DB에 admin 역할 계정이 하나도 없을 때 첫 로그인 요청에서 생성됩니다. admin은 로그인 화면의 `관리자 로그인`에서 `INITIAL_ADMIN_USERNAME`과 `INITIAL_ADMIN_PASSWORD`를 입력해 Passkey 없이 전체 관리자 세션을 발급받습니다. 로그인할 때마다 기존 admin 세션은 폐기되며 일반 사용자와 동일하게 30분 무활동 만료 및 서버 재시작 시 전체 세션 종료 규칙을 적용합니다. `INITIAL_ADMIN_PASSWORD`가 비어 있으면 admin 웹 로그인을 사용할 수 없습니다.
 
 admin Passkey를 분실했을 때 사용하는 복구 키 원문은 서버나 DB에 저장하지 않고 비밀번호 관리자에 별도로 보관합니다. `.env`에는 아래 명령으로 만든 PBKDF2 해시만 넣습니다.
 
@@ -188,7 +188,7 @@ cd backend
 .\.venv\Scripts\python.exe -c "from app.services.auth import hash_password; import getpass; print(hash_password(getpass.getpass('Admin recovery key: ')))"
 ```
 
-관리자 기기 복구 화면은 일반 로그인 화면에 노출하지 않으며 `/admin/reset` 주소로 직접 접근합니다. 이 화면에서 키가 확인되면 admin의 Passkey와 활성 세션만 제거하며 로그인시키지는 않습니다. 그 다음 일반 로그인 화면에서 `INITIAL_ADMIN_PASSWORD`로 다시 진입해 새 Passkey를 등록합니다. 복구 요청은 기본적으로 클라이언트 IP당 15분에 3회로 제한하며, 신뢰한 프록시가 전달한 주소만 사용합니다.
+관리자 기기 복구 화면은 일반 로그인 화면에 노출하지 않으며 `/admin/reset` 주소로 직접 접근합니다. 이 화면에서 키가 확인되면 기존 admin Passkey와 활성 세션만 제거하며 로그인시키지는 않습니다. 그 다음 일반 로그인 화면의 `관리자 로그인`에서 환경파일 계정으로 다시 로그인합니다. 복구 요청은 기본적으로 클라이언트 IP당 15분에 3회로 제한하며, 신뢰한 프록시가 전달한 주소만 사용합니다.
 
 로컬 HTTP 개발에서는 `AUTH_COOKIE_SECURE=false`를 사용합니다. HTTPS로 외부에 배포할 때는 반드시 `AUTH_COOKIE_SECURE=true`로 바꾸십시오. 로그인 세션은 원문 토큰이 아니라 SHA-256 해시로 DB에 저장되고, 브라우저에는 JavaScript로 읽을 수 없는 `HttpOnly` 쿠키로 전달됩니다. 세션은 마지막 클릭·터치·키보드·스크롤 활동을 기준으로 30분 동안 유지되며, 사용 중에는 기존 세션 행과 쿠키의 만료시간만 연장합니다. 30분 동안 활동이 없으면 로그인 화면으로 전환하고 만료 안내를 표시합니다. 만료·폐기된 과거 세션은 신규 세션 생성 과정에서 정리합니다. 백엔드 프로세스가 시작될 때 기존 활성 세션을 모두 폐기하므로 서버 재시작 후에는 모든 사용자가 로그인 화면부터 다시 시작합니다. 이 동작은 `python -m app.run`과 `uvicorn app.main:app` 실행 모두에 적용됩니다.
 

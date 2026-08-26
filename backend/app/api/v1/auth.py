@@ -313,6 +313,11 @@ def login(payload: LoginRequest, response: Response, db: Db, settings: AppSettin
     if is_environment_admin:
         user.is_active = True
         user.role = "admin"
+        session, raw_token = create_session(db, user, settings, purpose="full")
+        user.last_login_at = utcnow()
+        db.commit()
+        set_session_cookie(response, raw_token, settings)
+        return user_response(db, user, session, settings)
     registered = db.scalar(
         select(PasskeyCredential.id).where(PasskeyCredential.user_id == user.id)
     ) is not None
