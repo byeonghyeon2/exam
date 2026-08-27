@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tarfile
 import tempfile
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -76,13 +77,15 @@ class TransactionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
         self.c = deploy.Config(source=root / 'source', releases=root / 'releases',
-                               current=root / 'current', web=root / 'web', state=root / 'state')
+                               current=root / 'current', web=root / 'web', state=root / 'state',
+                               environments=root / 'environments', build_home=root / 'build-home')
         self.c.source.mkdir()
         (self.c.source / '.env').write_text('DO_NOT_DELETE')
         old_web = root / 'old-web'
         old_web.mkdir()
         (old_web / 'index.html').write_text('old')
         self.c.releases.mkdir()
+        self.c.environments.mkdir()
         self.c.current.symlink_to(self.c.source, target_is_directory=True)
         self.c.web.symlink_to(old_web, target_is_directory=True)
         self.old_web = old_web
@@ -233,6 +236,221 @@ class TransactionTests(unittest.TestCase):
                     patch.object(deploy.os, 'geteuid', return_value=0), \
                     patch.object(deploy.sys, 'argv', ['exam-deploy']):
                 self.assertEqual(deploy.main(), 75)
+
+    def python_backend(self, name):
+        backend = self.c.source / name / 'backend'
+        backend.mkdir(parents=True)
+        (backend / 'pyproject.toml').write_text(
+            '[project]\nname="exam"\nrequires-python=">=3.12"\ndependencies=["fastapi>=0.115"]\n')
+        return backend
+
+    def test_python_environment_cold_warm_and_changed_manifest(self):
+        first = FakeDeployment(self.c)
+        commands = []
+        def install(label, cwd, args, **kwargs):
+            commands.append(args)
+            if 'venv' in args:
+                (first.environment / 'bin').mkdir()
+                (first.environment / 'bin/python').write_text('test interpreter')
+            return ''
+        with patch.object(deploy.os, 'chown'), patch.object(first, 'freeze_release'), \
+                patch.object(first, 'logged_build_step', side_effect=install):
+            first.prepare_python(self.python_backend('first'), 1000, 1000)
+        self.assertEqual(len(commands), 3)
+        self.assertNotIn('.[dev]', str(commands))
+        self.assertEqual(commands[1][-1], 'fastapi>=0.115')
+        self.assertIsNone(first.writable_environment)
+        self.assertTrue((first.environment / '.exam-env.json').is_file())
+        second = FakeDeployment(self.c)
+        second_backend = self.python_backend('second')
+        with patch.object(second, 'environment_ready', return_value=True), \
+                patch.object(second, 'logged_build_step') as installed:
+            second.prepare_python(second_backend, 1000, 1000)
+        installed.assert_not_called()
+        self.assertEqual((second_backend / '.venv').resolve(), first.environment)
+        (second_backend / '.venv').unlink()
+        (second_backend / 'pyproject.toml').write_text(
+            '[project]\nname="exam"\nrequires-python=">=3.12"\ndependencies=["fastapi>=0.116"]\n')
+        third = FakeDeployment(self.c)
+        with patch.object(deploy.os, 'chown'), \
+                patch.object(third, 'logged_build_step', side_effect=deploy.DeploymentError('stop')):
+            with self.assertRaises(deploy.DeploymentError):
+                third.prepare_python(second_backend, 1000, 1000)
+        self.assertNotEqual(third.new_environment, first.environment)
+        self.assertIsNone(third.writable_environment)
+        self.assertFalse((third.new_environment / '.exam-env.json').exists())
+
+    def test_dependency_key_changes_for_runtime_and_file_changes(self):
+        manifest = self.c.source / 'manifest'
+        manifest.write_text('one')
+        initial = deploy.Deployment.dependency_key([manifest], 'python-a')
+        self.assertNotEqual(initial, deploy.Deployment.dependency_key([manifest], 'python-b'))
+        manifest.write_text('two')
+        self.assertNotEqual(initial, deploy.Deployment.dependency_key([manifest], 'python-a'))
+
+    def test_python_unsupported_packaging_stops_before_install(self):
+        backend = self.python_backend('unsupported')
+        with (backend / 'pyproject.toml').open('a') as output:
+            output.write('dynamic=["version"]\n')
+        job = FakeDeployment(self.c)
+        with patch.object(job, 'logged_build_step') as installed:
+            with self.assertRaises(deploy.DeploymentError):
+                job.prepare_python(backend, 1000, 1000)
+        installed.assert_not_called()
+
+    def test_environment_marker_must_be_immutable_valid_and_not_a_link(self):
+        env = self.c.environments / 'environment'
+        (env / 'bin').mkdir(parents=True)
+        (env / 'bin/python').write_text('python')
+        marker = env / '.exam-env.json'
+        marker.write_text('{"key":"expected"}')
+        env.chmod(0o755)
+        marker.chmod(0o644)
+        original_stat = Path.stat
+        def root_stat(path, *args, **kwargs):
+            values = list(original_stat(path, *args, **kwargs))
+            values[4] = 0  # Simulate controller ownership without host root privileges.
+            return deploy.os.stat_result(values)
+        with patch.object(Path, 'stat', root_stat):
+            self.assertTrue(deploy.Deployment.environment_ready(env, 'expected'))
+            self.assertFalse(deploy.Deployment.environment_ready(env, 'other'))
+            marker.chmod(0o666)
+            self.assertFalse(deploy.Deployment.environment_ready(env, 'expected'))
+            marker.chmod(0o644)
+            marker.write_text('invalid-json')
+            self.assertFalse(deploy.Deployment.environment_ready(env, 'expected'))
+            marker.unlink()
+            marker.symlink_to(self.c.source / '.env')
+            self.assertFalse(deploy.Deployment.environment_ready(env, 'expected'))
+
+    def test_sandbox_only_allows_writes_to_fresh_python_environment(self):
+        job = FakeDeployment(self.c)
+        job.candidate = self.c.releases / 'candidate'
+        job.environment = self.c.environments / 'reused'
+        with patch.object(job, 'command', return_value='') as command, \
+                patch.object(deploy.subprocess, 'run'):
+            job.build_step(self.c.source, ['true'])
+            args = command.call_args.args[0]
+            writable = [arg for arg in args if arg.startswith('--property=ReadWritePaths=')]
+            self.assertEqual(len(writable), 1)
+            self.assertNotIn(str(self.c.environments), writable[0])
+            job.writable_environment = self.c.environments / 'fresh'
+            job.build_step(self.c.source, ['true'])
+            writable = [arg for arg in command.call_args.args[0] if arg.startswith('--property=ReadWritePaths=')]
+            self.assertEqual(len(writable), 1)
+            self.assertIn(str(job.writable_environment), writable[0])
+            self.assertNotIn(str(job.environment), writable[0])
+            self.assertNotIn(str(self.c.build_home), writable[0])
+
+    def test_prepare_freezes_dependencies_before_executing_app_source(self):
+        job = FakeDeployment(self.c)
+        job.candidate = self.c.releases / 'candidate'
+        job.environment = self.c.environments / 'python'
+        job.environment.mkdir()
+        order = []
+        def unpack(archive, destination):
+            (destination / 'backend/alembic/versions').mkdir(parents=True)
+            (destination / 'frontend/dist').mkdir(parents=True)
+            (destination / 'frontend/dist/index.html').write_text('built')
+            (destination / 'frontend/node_modules').mkdir()
+        def python_ready(backend, uid, gid):
+            order.append('python-ready')
+            (backend / '.venv').symlink_to(job.environment, target_is_directory=True)
+            return str(backend / '.venv/bin/python')
+        def frontend_ready(frontend):
+            order.append('frontend-ready')
+            return 'key'
+        def run(label, cwd, args, *, capture=False):
+            order.append('heads' if capture else 'app-import')
+            return '["0010"]' if capture else ''
+        with patch.object(job, 'as_user'), patch.object(deploy, 'unpack_archive', side_effect=unpack), \
+                patch('pwd.getpwnam'), patch.object(job, 'change_owner'), patch.object(deploy.os, 'chown'), \
+                patch.object(job, 'freeze_release'), \
+                patch.object(job, 'prepare_python', side_effect=python_ready), \
+                patch.object(job, 'prepare_frontend', side_effect=frontend_ready), \
+                patch.object(job, 'logged_build_step', side_effect=run):
+            deploy.Deployment.prepare(job)
+        self.assertEqual(order, ['python-ready', 'frontend-ready', 'app-import', 'heads'])
+        self.assertFalse((job.candidate / '.build-home').exists())
+        self.assertFalse((job.candidate / 'frontend/node_modules').exists())
+
+    def test_frontend_reuse_is_copy_not_install_or_shared_write(self):
+        job = FakeDeployment(self.c)
+        job.previous = self.c.releases / 'previous'
+        old = job.previous / '.node-dependencies'
+        (old / '.bin').mkdir(parents=True)
+        (old / 'package').mkdir()
+        (old / 'package/tool').write_text('original')
+        (old / '.bin/tool').symlink_to('../package/tool')
+        (old / '.package-lock.json').write_text('{}')
+        (job.previous / '.exam-release.json').write_text(json.dumps({'frontend_dependencies_key': 'same'}))
+        frontend = self.c.releases / 'candidate/frontend'
+        frontend.mkdir(parents=True)
+        calls = []
+        def build(label, cwd, args, **kwargs):
+            calls.append(args)
+            if args[0] == 'cp':
+                subprocess.run(args, check=True)
+            return ''
+        with patch.object(deploy.os, 'chown'), patch.object(job, 'freeze_release'), \
+                patch.object(job, 'frontend_dependency_key', return_value='same'), \
+                patch.object(job, 'logged_build_step', side_effect=build):
+            self.assertEqual(job.prepare_frontend(frontend), 'same')
+        self.assertEqual([args[0] for args in calls], ['cp', 'npm'])
+        self.assertEqual(calls[-1], ['npm', 'run', 'build'])
+        (frontend / 'node_modules/package/tool').write_text('candidate')
+        self.assertEqual((old / 'package/tool').read_text(), 'original')
+        self.assertEqual((frontend.parent / '.node-dependencies/package/tool').read_text(), 'original')
+        self.assertTrue((frontend / 'node_modules/.bin/tool').is_symlink())
+
+    def test_frontend_invalid_cache_falls_back_to_install(self):
+        job = FakeDeployment(self.c)
+        job.previous = self.c.releases / 'previous'
+        old = job.previous / '.node-dependencies'
+        old.mkdir(parents=True)
+        (old / '.package-lock.json').write_text('{}')
+        (old / 'escape').symlink_to(self.c.source / '.env')
+        (job.previous / '.exam-release.json').write_text(json.dumps({'frontend_dependencies_key': 'same'}))
+        frontend = self.c.source / 'frontend'
+        frontend.mkdir()
+        with patch.object(job, 'frontend_dependency_key', return_value='same'), \
+                patch.object(job, 'logged_build_step') as build:
+            job.prepare_frontend(frontend)
+        self.assertEqual(build.call_args_list[0].args[2][:2], ['npm', 'ci'])
+
+    def test_source_dependent_frontend_install_is_not_reused(self):
+        frontend = self.c.source / 'frontend'
+        frontend.mkdir()
+        job = FakeDeployment(self.c)
+        for package in ({'scripts': {'postinstall': 'node setup.js'}},
+                        {'workspaces': ['packages/*']}, {'dependencies': {'local': 'file:../local'}}):
+            with self.subTest(package=package):
+                (frontend / 'package.json').write_text(json.dumps(package))
+                self.assertEqual(job.frontend_dependency_key(frontend), '')
+
+    def test_environment_pruning_preserves_references_unknown_and_failed_install_cleanup(self):
+        job = FakeDeployment(self.c)
+        job.previous = self.c.source
+        used = self.c.environments / ('a' * 64 + '-used')
+        unused = self.c.environments / ('b' * 64 + '-unused')
+        unknown = self.c.environments / 'operator-files'
+        for path in (used, unused, unknown):
+            path.mkdir()
+        retained = self.c.releases / 'retained/backend'
+        retained.mkdir(parents=True)
+        (retained / '.venv').symlink_to(used, target_is_directory=True)
+        with patch.object(job, 'environment_ready', return_value=True):
+            job.prune_environments()
+        self.assertTrue(used.exists())
+        self.assertTrue(unknown.exists())
+        self.assertFalse(unused.exists())
+        job.candidate = self.c.releases / 'failed'
+        job.candidate.mkdir()
+        job.new_environment = self.c.environments / ('c' * 64 + '-failed')
+        job.new_environment.mkdir()
+        job.cleanup_candidate()
+        self.assertFalse(job.new_environment.exists())
+        self.assertTrue(used.exists())
 
 
 class ArchiveTests(unittest.TestCase):

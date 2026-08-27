@@ -14,7 +14,9 @@ git push -u origin main
 CI runs backend lint, type checks and tests plus frontend lint, type checks, tests and a production build. It uses no OpenAI secret and tests must use the fake AI adapter. For deployment, provide runtime secrets outside Git, run `alembic upgrade head`, and terminate TLS at a trusted reverse proxy.
 
 For the current Ubuntu server, use [approved release deployment](ubuntu-approved-deployment.md).
-Its installed `exam-deploy` command fetches main, builds/tests an isolated release,
+Its installed `exam-deploy` command fetches main, reuses unchanged dependencies and builds an isolated release,
 backs up the DB, activates it and rolls back code/frontend on failed health checks.
 It never runs Alembic automatically: a schema mismatch stops for separate review.
+Full lint/type/test checks remain in GitHub CI, not repeated on the production server.
+The command does not wait for CI; verify CI success before invoking deployment.
 

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import signal
@@ -18,6 +19,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import tomllib
 from dataclasses import dataclass
 from typing import Any
 import urllib.request
@@ -28,6 +30,7 @@ import uuid
 class Config:
     source: Path = Path('/opt/apps/exam')
     releases: Path = Path('/opt/apps/exam-releases')
+    environments: Path = Path('/opt/apps/exam-python-envs')
     current: Path = Path('/opt/apps/exam-current')
     web: Path = Path('/var/www/apps/exam/current')
     state: Path = Path('/var/lib/exam-deploy')
@@ -93,6 +96,9 @@ class Deployment:
         self.phase = 'preflight'
         self.started = utcnow()
         self.finished = False
+        self.environment: Path | None = None
+        self.new_environment: Path | None = None
+        self.writable_environment: Path | None = None
 
     def emit(self, status: str, phase: str, message: str) -> None:
         self.phase = phase
@@ -151,6 +157,8 @@ class Deployment:
             raise DeploymentError('Unexpected source repository')
         if shutil.disk_usage(self.c.releases).free < 3 * 1024**3:
             raise DeploymentError('At least 3 GiB free disk space is required')
+        if not self.c.environments.is_dir() or self.c.environments.is_symlink():
+            raise DeploymentError('Install updated deployment support first; Python environment store missing')
         self.command(['systemctl', 'is-active', '--quiet', 'exam-backend.service'])
 
     def fetch(self) -> str:
@@ -190,10 +198,11 @@ class Deployment:
             '--property=ProtectControlGroups=true', '--property=RestrictSUIDSGID=true',
             '--property=CapabilityBoundingSet=', '--property=UMask=0022',
             '--property=RuntimeMaxSec=30min',
-            f'--property=ReadWritePaths={self.candidate} {self.c.build_home}',
+            f'--property=ReadWritePaths={self.candidate}'
+            + (f' {self.writable_environment}' if self.writable_environment else ''),
             '--property=InaccessiblePaths=/etc/exam /var/lib/exam /var/backups/apps/exam',
             '/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
-            f'HOME={self.c.build_home}', 'LANG=C.UTF-8', 'CI=true',
+            f'HOME={self.candidate}/.build-home', 'LANG=C.UTF-8', 'CI=true',
             'APP_ENV=test', 'DATABASE_URL=sqlite+pysqlite:///:memory:', 'OPENAI_API_KEY=',
             'VITE_API_BASE_URL=/api/v1', 'PYTHONDONTWRITEBYTECODE=1', *args,
         ]
@@ -217,6 +226,151 @@ class Deployment:
         print(f'[3/8][완료] {label} ({time.monotonic() - started:.1f}초)', flush=True)
         return result
 
+    @staticmethod
+    def dependency_key(paths: list[Path], runtime: str) -> str:
+        digest = hashlib.sha256(('exam-dependencies-v1\0' + runtime).encode())
+        for path in paths:
+            data = path.read_bytes() if path.is_file() else b''
+            digest.update(len(data).to_bytes(8, 'big'))
+            digest.update(data)
+        return digest.hexdigest()
+
+    @staticmethod
+    def environment_ready(path: Path, key: str) -> bool:
+        marker = path / '.exam-env.json'
+        try:
+            return (not path.is_symlink() and path.is_dir()
+                    and path.stat().st_uid == 0 and not path.stat().st_mode & 0o022
+                    and not marker.is_symlink() and marker.stat().st_uid == 0
+                    and not marker.stat().st_mode & 0o022
+                    and json.loads(marker.read_text()).get('key') == key
+                    and (path / 'bin/python').is_file())
+        except (OSError, ValueError, AttributeError):
+            return False
+
+    def prepare_python(self, backend: Path, uid: int, gid: int) -> str:
+        manifest = backend / 'pyproject.toml'
+        project = tomllib.loads(manifest.read_text(encoding='utf-8'))['project']
+        requires = re.fullmatch(r'>=\s*(\d+)\.(\d+)(?:\.(\d+))?', project.get('requires-python', ''))
+        dependencies = project.get('dependencies')
+        # 현재 프로젝트로 검증된 정적 의존성 계약만 허용한다. 새 패키징 방식은 검토가 필요하다.
+        if (not requires or tuple(map(int, requires.groups(default='0'))) > sys.version_info[:3]
+                or project.get('dynamic') or project.get('scripts') or project.get('gui-scripts')
+                or project.get('entry-points') or not isinstance(dependencies, list)
+                or not all(isinstance(d, str) and re.match(r'^[A-Za-z0-9]', d)
+                           and not any(c in d for c in ('@', '/', '\\')) for d in dependencies)):
+            raise DeploymentError('Unsupported Python dependency contract; manual review required')
+        identity = f'{sys.version}|{sys.implementation.cache_tag}|{platform.machine()}|{sys.platform}'
+        key = self.dependency_key([manifest], identity)
+        for path in sorted(self.c.environments.glob(f'{key}-*')):
+            if self.environment_ready(path, key):
+                self.environment = path
+                self.emit('running', 'build', '3-1 Python 의존성 변경 없음 — 기존 환경 재사용 (설치 생략)')
+                break
+        if self.environment is None:
+            # venv에는 절대 경로가 들어간다. 완성 후에도 이동/이름 변경하지 않는다.
+            self.environment = self.new_environment = self.c.environments / f'{key}-{self.run_id}'
+            self.environment.mkdir(mode=0o755)
+            os.chown(self.environment, uid, gid)
+            self.writable_environment = self.environment
+            try:
+                self.logged_build_step('3-1 새 Python 의존성 환경 생성', backend,
+                                       ['/usr/bin/python3', '-I', '-m', 'venv', str(self.environment)])
+                python = str(self.environment / 'bin/python')
+                self.logged_build_step('3-2 변경된 Python 운영 의존성 설치', backend,
+                                       [python, '-I', '-m', 'pip', 'install', '--disable-pip-version-check',
+                                        '--no-input', '--', *dependencies])
+                self.logged_build_step('3-3 Python 의존성 호환성 검사', backend,
+                                       [python, '-I', '-m', 'pip', 'check'])
+                # 빌드 계정이 나중에 바꿀 수 있는 외부 파일을 캐시 환경이 참조하지 못하게 한다.
+                for path in self.environment.rglob('*'):
+                    if path.is_symlink() and not path.resolve().is_relative_to(self.environment):
+                        if not (path.parent == self.environment / 'bin'
+                                and path.resolve() == Path(sys.executable).resolve()):
+                            raise DeploymentError('Unsafe Python environment link')
+                marker = self.environment / '.exam-env.json'
+                if marker.exists() or marker.is_symlink():
+                    raise DeploymentError('Unexpected Python environment metadata')
+                self.freeze_release(self.environment)
+                marker.write_text(json.dumps({'key': key}) + '\n')
+                marker.chmod(0o644)
+            finally:
+                self.writable_environment = None
+        link = backend / '.venv'
+        if link.exists() or link.is_symlink():
+            raise DeploymentError('Source must not supply a Python environment')
+        link.symlink_to(self.environment, target_is_directory=True)
+        return str(link / 'bin/python')
+
+    def frontend_dependency_key(self, frontend: Path) -> str:
+        package = json.loads((frontend / 'package.json').read_text())
+        scripts = package.get('scripts', {})
+        dependency_values = [value for section in ('dependencies', 'devDependencies', 'optionalDependencies')
+                             for value in package.get(section, {}).values()]
+        # 설치 훅/workspace/로컬 의존성이 있으면 소스 변경이 설치 결과에도 영향을 줄 수 있다.
+        if ((frontend / 'npm-shrinkwrap.json').exists() or package.get('overrides')
+                or package.get('workspaces') or any(name in scripts for name in (
+                'preinstall', 'install', 'postinstall', 'prepublish', 'preprepare', 'prepare', 'postprepare'))
+                or any(not isinstance(value, str) or value.startswith(('file:', 'link:', 'workspace:', '.', '/'))
+                       for value in dependency_values)):
+            return ''
+        lock = json.loads((frontend / 'package-lock.json').read_text())
+        if lock.get('lockfileVersion') != 3 or any(
+                value.get('link') or str(value.get('resolved', '')).startswith(('file:', 'link:', '.', '/'))
+                for value in lock.get('packages', {}).values()):
+            return ''
+        runtime = self.build_step(frontend, ['node', '--version'], capture=True)
+        runtime += '|' + self.build_step(frontend, ['npm', '--version'], capture=True)
+        runtime += f'|{sys.platform}|{platform.machine()}'
+        return self.dependency_key([frontend / 'package.json', frontend / 'package-lock.json',
+                                    frontend / '.npmrc', frontend.parent / '.npmrc'], runtime)
+
+    @staticmethod
+    def reusable_node_modules(root: Path) -> bool:
+        if root.is_symlink() or not root.is_dir() or not (root / '.package-lock.json').is_file():
+            return False
+        for path in root.rglob('*'):
+            if path.is_symlink():
+                if os.path.isabs(os.readlink(path)) or not path.resolve().is_relative_to(root):
+                    return False
+            elif not path.is_file() and not path.is_dir():
+                return False
+        return True
+
+    def prepare_frontend(self, frontend: Path) -> str:
+        if (frontend / 'node_modules').exists() or (frontend / 'node_modules').is_symlink():
+            raise DeploymentError('Source must not supply node_modules')
+        key = self.frontend_dependency_key(frontend)
+        previous_key = ''
+        if self.previous is not None and self.previous != self.c.source:
+            try:
+                previous_key = json.loads((self.previous / '.exam-release.json').read_text()).get('frontend_dependencies_key', '')
+            except (OSError, ValueError, AttributeError):
+                pass
+        previous_modules = self.previous / '.node-dependencies' if self.previous else Path('/nonexistent')
+        if key and key == previous_key and self.reusable_node_modules(previous_modules):
+            # 원본을 수정하지 않는 복사다. hardlink/공유 쓰기 권한은 사용하지 않는다.
+            self.logged_build_step('3-4 Node 의존성 변경 없음 — 복사 재사용 (설치 생략)', frontend,
+                                   ['cp', '-R', '--preserve=mode,timestamps', '--reflink=auto',
+                                    str(previous_modules), str(frontend / 'node_modules')])
+        else:
+            self.logged_build_step('3-4 변경된 프론트엔드 의존성 설치', frontend,
+                                   ['npm', 'ci', '--prefer-offline', '--no-audit', '--no-fund'])
+        snapshot = frontend.parent / '.node-dependencies'
+        if snapshot.exists() or snapshot.is_symlink():
+            raise DeploymentError('Source must not supply dependency snapshots')
+        if key and self.reusable_node_modules(frontend / 'node_modules'):
+            # 앱 빌드가 node_modules를 바꿔도 다음 배포로 전파되지 않는 원본 스냅샷.
+            # 부모까지 root 소유로 잠가 빌드 계정의 스냅샷 교체/변조를 막는다.
+            os.chown(frontend.parent, 0, 0)
+            frontend.parent.chmod(0o755)
+            shutil.copytree(frontend / 'node_modules', snapshot, symlinks=True)
+            self.freeze_release(snapshot)
+        else:
+            key = ''
+        self.logged_build_step('3-5 프론트엔드 운영 빌드', frontend, ['npm', 'run', 'build'])
+        return key
+
     def prepare(self) -> None:
         assert self.candidate is not None
         self.candidate.mkdir(mode=0o755)
@@ -231,24 +385,19 @@ class Deployment:
         import pwd
         account = pwd.getpwnam(self.c.build_user)
         self.change_owner(self.candidate, account.pw_uid, account.pw_gid)
+        temporary_home = self.candidate / '.build-home'
+        if temporary_home.exists() or temporary_home.is_symlink():
+            raise DeploymentError('Source must not supply build home')
+        temporary_home.mkdir(mode=0o700)
+        os.chown(temporary_home, account.pw_uid, account.pw_gid)
         backend = self.candidate / 'backend'
-        python = str(backend / '.venv/bin/python')
-        # 3단계: 별도 릴리스에서만 설치/검증한다. 아직 운영 링크나 DB는 바꾸지 않는다.
-        self.logged_build_step('3-1 Python 가상환경 생성', backend, ['/usr/bin/python3', '-m', 'venv', '.venv'])
-        self.logged_build_step('3-2 Python 의존성 설치', backend, [python, '-m', 'pip', 'install', '-e', '.[dev]'])
-        for label, args in (
-                ('3-3 Python 의존성 호환성 검사', [python, '-m', 'pip', 'check']),
-                ('3-4 백엔드 코드 검사 (Ruff)', [python, '-m', 'ruff', 'check', '.']),
-                ('3-5 백엔드 타입 검사 (mypy)', [python, '-m', 'mypy', 'app']),
-                ('3-6 백엔드 테스트 (pytest)', [python, '-m', 'pytest'])):
-            self.logged_build_step(label, backend, args)
+        python = self.prepare_python(backend, account.pw_uid, account.pw_gid)
         frontend = self.candidate / 'frontend'
-        for label, args in (
-                ('3-7 프론트엔드 의존성 설치', ['npm', 'ci']),
-                ('3-8 프론트엔드 코드 검사', ['npm', 'run', 'lint']),
-                ('3-9 프론트엔드 테스트', ['npm', 'test']),
-                ('3-10 프론트엔드 운영 빌드', ['npm', 'run', 'build'])):
-            self.logged_build_step(label, frontend, args)
+        frontend_key = self.prepare_frontend(frontend)
+        # 앱 소스는 재사용할 의존성이 모두 고정된 뒤에만 실행한다.
+        # import만 확인하며 서버 시작/lifespan/운영 DB 접속은 하지 않는다.
+        self.logged_build_step('3-6 백엔드 모듈 로딩 확인 (DB 접속 없음)', backend,
+                               [python, '-c', 'from app.main import app; assert app.routes'])
         dist = frontend / 'dist'
         for directory in (backend, frontend, dist, backend / 'alembic', backend / 'alembic/versions'):
             if directory.is_symlink() or not directory.is_dir():
@@ -263,7 +412,7 @@ class Deployment:
                       'print(json.dumps(ScriptDirectory.from_config(Config("alembic.ini")).get_heads()))')
         heads_file = backend / '.deploy-heads.json'
         # This subprocess runs as the build user; stdout is validated before activation.
-        heads = self.logged_build_step('3-11 Alembic 목표 버전 확인 (DB 접속 없음)',
+        heads = self.logged_build_step('3-7 Alembic 목표 버전 확인 (DB 접속 없음)',
                                        backend, [python, '-c', heads_code], capture=True)
         parsed = json.loads(heads)
         if not isinstance(parsed, list) or len(parsed) != 1 or not re.fullmatch('[A-Za-z0-9_]+', parsed[0]):
@@ -271,12 +420,15 @@ class Deployment:
         if heads_file.is_symlink() or (self.candidate / '.exam-release.json').exists() or (self.candidate / '.exam-release.json').is_symlink():
             raise DeploymentError('Unexpected release metadata path')
         heads_file.write_text(json.dumps(parsed))
-        self.emit('running', 'build', '3-12 빌드 임시 의존성 정리 및 릴리스 권한 고정')
-        if (frontend / 'node_modules').is_dir():
-            shutil.rmtree(frontend / 'node_modules')
+        self.emit('running', 'build', '3-8 재사용 의존성 보존 및 릴리스 권한 고정')
+        if (backend / '.venv').resolve() != self.environment:
+            raise DeploymentError('Python environment link changed during build')
+        shutil.rmtree(temporary_home)
+        shutil.rmtree(frontend / 'node_modules')
         self.freeze_release(self.candidate)
         (self.candidate / '.exam-release.json').write_text(json.dumps({
             'commit': self.target, 'created_at': utcnow(), 'run_id': self.run_id,
+            'frontend_dependencies_key': frontend_key,
         }) + '\n')
 
     @staticmethod
@@ -361,6 +513,23 @@ class Deployment:
         if self.c.current.resolve() == self.candidate or self.c.web.resolve().is_relative_to(self.candidate):
             return
         shutil.rmtree(self.candidate)
+        self.prune_environments()
+
+    def prune_environments(self) -> None:
+        # 보관 중인 어떤 릴리스라도 참조하는 환경은 삭제하지 않는다. 정체불명 경로도 보존한다.
+        referenced = {(release / 'backend/.venv').resolve() for release in self.c.releases.iterdir()
+                      if release.is_dir() and not release.is_symlink()}
+        referenced.add((self.c.current.resolve() / 'backend/.venv').resolve())
+        if not self.c.environments.is_dir():
+            return
+        for path in self.c.environments.iterdir():
+            if (path.is_symlink() or path in referenced
+                    or path.parent.resolve() != self.c.environments.resolve()):
+                continue
+            key = path.name.split('-', 1)[0]
+            if ((re.fullmatch('[0-9a-f]{64}', key) and self.environment_ready(path, key))
+                    or path == self.new_environment):
+                shutil.rmtree(path)
 
     def prune(self) -> None:
         keep = {self.c.current.resolve(), self.previous}
@@ -371,6 +540,7 @@ class Deployment:
         for release in known:
             if release not in keep and release.parent.resolve() == self.c.releases.resolve():
                 shutil.rmtree(release)
+        self.prune_environments()
 
     def execute(self) -> int:
         try:
@@ -386,7 +556,7 @@ class Deployment:
                 self.emit('noop', 'complete', '이미 최신 커밋 실행 중 — 빌드·백업·재시작 없이 종료')
                 return 0
             self.candidate = self.c.releases / f'{self.run_id}-{self.target[:12]}'
-            self.emit('running', 'build', '별도 릴리스 준비 — exam-build 계정으로 빌드·테스트 (운영 서비스 유지)')
+            self.emit('running', 'build', '경량 배포 준비 — 운영 의존성·빌드만 수행, 전체 테스트는 CI에서 실행')
             self.prepare()
             self.emit('running', 'schema', 'DB 버전과 기존 마이그레이션 비교 — 스키마 변경이 필요하면 중단')
             self.check_schema()

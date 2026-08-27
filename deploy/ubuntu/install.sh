@@ -10,7 +10,7 @@ echo '[설치 1/4] 필수 파일·명령·기존 서버 구성 확인'
 for file in exam-deploy exam_deploy.py exam-deploy.service exam-backend-release.conf; do
     [[ -f "$bundle/$file" && ! -L "$bundle/$file" ]] || exit 1
 done
-for tool in git python3 node npm mysql systemctl systemd-run runuser tar flock; do
+for tool in git python3 node npm mysql systemctl systemd-run runuser tar flock cp; do
     command -v "$tool" >/dev/null || { echo "Missing dependency: $tool" >&2; exit 1; }
 done
 id bhadmin >/dev/null
@@ -38,7 +38,7 @@ if ! id exam-build >/dev/null 2>&1; then
 fi
 [[ $(id -nG exam-build) == exam-build ]] || { echo 'Build account has unexpected groups.' >&2; exit 1; }
 install -d -o exam-build -g exam-build -m 0700 /var/lib/exam-build
-install -d -o root -g root -m 0755 /opt/apps/exam-releases /usr/local/lib/exam-deploy
+install -d -o root -g root -m 0755 /opt/apps/exam-releases /opt/apps/exam-python-envs /usr/local/lib/exam-deploy
 install -d -o root -g bhadmin -m 0750 /var/lib/exam-deploy /var/lib/exam-deploy/history
 echo '[설치 3/4] 배포 명령과 systemd 설정 설치'
 install -o root -g root -m 0644 "$bundle/exam_deploy.py" /usr/local/lib/exam-deploy/exam_deploy.py
