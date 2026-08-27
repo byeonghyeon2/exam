@@ -121,9 +121,9 @@ class Deployment:
                 os.chown(temporary, 0, grp.getgrnam(self.c.operator).gr_gid)
             os.replace(temporary, destination)
         # UI가 읽는 phase/status는 유지하고, 터미널에는 사람이 읽을 단계 번호를 붙인다.
-        steps = {'preflight': '1/8', 'fetch': '2/8', 'build': '3/8',
-                 'schema': '4/8', 'backup': '5/8', 'activate': '6/8',
-                 'health': '7/8', 'complete': '8/8', 'rollback': '복구'}
+        steps = {'preflight': '1/7', 'fetch': '2/7', 'build': '3/7',
+                 'schema': '4/7', 'activate': '5/7',
+                 'health': '6/7', 'complete': '7/7', 'rollback': '복구'}
         print(f'[{steps.get(phase, phase)}][{phase}][{status}] {message}', flush=True)
 
     def command(self, args: list[str], *, capture: bool = False) -> str:
@@ -223,7 +223,7 @@ class Deployment:
         except DeploymentError as error:
             # 최종 status.json에서도 어느 하위 검사가 실패했는지 알 수 있게 한다.
             raise DeploymentError(f'{label}: {error}', error.code) from error
-        print(f'[3/8][완료] {label} ({time.monotonic() - started:.1f}초)', flush=True)
+        print(f'[3/7][완료] {label} ({time.monotonic() - started:.1f}초)', flush=True)
         return result
 
     @staticmethod
@@ -472,11 +472,6 @@ class Deployment:
         if actual.splitlines() != sorted(heads):
             raise DeploymentError('DB migration approval required; no schema or live release changed', 20)
 
-    def backup(self) -> None:
-        self.command(['systemctl', 'start', 'exam-db-backup.service'])
-        if self.command(['systemctl', 'show', 'exam-db-backup.service', '-p', 'Result', '--value'], capture=True) != 'success':
-            raise DeploymentError('Pre-deployment DB backup failed')
-
     def restart(self) -> None:
         self.command(['systemctl', 'restart', 'exam-backend.service'])
 
@@ -544,7 +539,7 @@ class Deployment:
 
     def execute(self) -> int:
         try:
-            # 1~5: 운영 코드/DB 스키마를 변경하지 않는 준비 구간이다.
+            # 1~4: 운영 코드/DB 스키마를 변경하지 않는 준비 구간이다.
             self.emit('running', 'preflight', '사전 점검: 중단된 배포, 운영 경로, 서버 소스 변경, 디스크, 서비스 확인')
             self.preflight()
             self.emit('running', 'fetch', 'Git main 최신 소스 가져오기 — 원본 작업 폴더와 .env는 그대로 유지')
@@ -560,9 +555,8 @@ class Deployment:
             self.prepare()
             self.emit('running', 'schema', 'DB 버전과 기존 마이그레이션 비교 — 스키마 변경이 필요하면 중단')
             self.check_schema()
-            self.emit('running', 'backup', '운영 DB 백업 및 성공 여부 확인 — 실패하면 전환하지 않음')
-            self.backup()
-            # 6: 여기부터 운영에 반영된다. 복구 정보 기록 후 두 링크를 전환한다.
+            # 백업은 사용자 지정 월간 타이머만 담당한다. 배포에서는 호출하지 않는다.
+            # 5: 여기부터 운영에 반영된다. 복구 정보 기록 후 두 링크를 전환한다.
             self.emit('running', 'activate', '운영 반영 시작: 복구 정보 기록 → 백엔드/프론트엔드 링크 전환')
             self.checkpoint()
             self.switched = True  # Covers a failure between the two link replacements.
@@ -570,17 +564,17 @@ class Deployment:
             atomic_link(self.c.web, self.candidate / 'frontend/dist')
             self.emit('running', 'activate', '백엔드 재시작 — 짧은 접속 중단 및 재로그인이 발생할 수 있음')
             self.restart()
-            # 7: 프로세스가 새 코드를 실행하고 HTTPS가 새 화면을 반환하는지 확인한다.
+            # 6: 프로세스가 새 코드를 실행하고 HTTPS가 새 화면을 반환하는지 확인한다.
             self.emit('running', 'health', '운영 검증: 백엔드 실행 경로 · health API · DB API · HTTPS 화면')
             self.healthy(self.candidate)
             self.finished = True
             (self.c.state / 'pending.json').unlink()
-            # 8: 검증된 배포만 완료 처리. 정리는 알려진 오래된 릴리스에 한정한다.
-            print('[8/8][정리] 오래된 릴리스 정리 — 최근 3개와 직전 운영 릴리스 보존', flush=True)
+            # 7: 검증된 배포만 완료 처리. 정리는 알려진 오래된 릴리스에 한정한다.
+            print('[7/7][정리] 오래된 릴리스 정리 — 최근 3개와 직전 운영 릴리스 보존', flush=True)
             try:
                 self.prune()
             except OSError:
-                print('[8/8][경고] 오래된 릴리스 정리 보류 — 운영 서비스 상태는 정상', flush=True)
+                print('[7/7][경고] 오래된 릴리스 정리 보류 — 운영 서비스 상태는 정상', flush=True)
             self.emit('succeeded', 'complete', '배포 완료 — 운영 검증 통과, DB 스키마 변경 없음')
             return 0
         except Exception as error:

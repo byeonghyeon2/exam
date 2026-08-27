@@ -1,7 +1,8 @@
 #!/bin/sh
 # Stable entry point for terminal use and the future management UI's systemd job.
 # 신규 서버의 bhadmin 계정에서 sudo로 실행한다. 설치기와 달리 실제 운영 전환까지 수행한다.
-# 진행 순서: 사전점검 → Git fetch → 운영 설치/빌드 → DB 버전 확인 → 백업 → 전환 → 상태 확인 → 정리.
+# 진행 순서: 사전점검 → Git fetch → 운영 설치/빌드 → DB 버전 확인 → 전환 → 상태 확인 → 정리.
+# DB 백업은 별도 월간 타이머로 실행하며 배포 중에는 실행하지 않는다.
 set -eu
 if [ "$#" -ne 0 ]; then
     echo 'Usage: sudo /usr/local/sbin/exam-deploy (deploys origin/main only)' >&2

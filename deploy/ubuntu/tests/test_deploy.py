@@ -108,13 +108,13 @@ class TransactionTests(unittest.TestCase):
     def test_success_and_order(self):
         job = FakeDeployment(self.c)
         self.assertEqual(job.execute(), 0)
-        self.assertEqual(job.calls, ['build', 'schema', 'backup', 'restart', 'health'])
+        self.assertEqual(job.calls, ['build', 'schema', 'restart', 'health'])
         self.assertEqual(self.state()['status'], 'succeeded')
         self.assertEqual(self.c.current.resolve(), job.candidate)
         self.assertTrue((self.c.source / '.env').exists())
 
     def test_pre_activation_failures_preserve_service_and_env(self):
-        for failure in ('dirty', 'nonfastforward', 'build', 'schema', 'backup'):
+        for failure in ('dirty', 'nonfastforward', 'build', 'schema'):
             with self.subTest(failure=failure):
                 job = FakeDeployment(self.c, failure)
                 self.assertNotEqual(job.execute(), 0)
@@ -162,6 +162,11 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(job.execute(), 0)
         self.assertEqual(self.state()['status'], 'noop')
         self.assertEqual(job.calls, [])
+
+    def test_deployment_never_starts_a_backup(self):
+        job = FakeDeployment(self.c, 'backup')
+        self.assertEqual(job.execute(), 0)
+        self.assertNotIn('backup', job.calls)
 
     def test_cleanup_rejects_outside_release_root(self):
         job = FakeDeployment(self.c)
@@ -482,6 +487,16 @@ class ArchiveTests(unittest.TestCase):
 
 
 class ProgressTests(unittest.TestCase):
+    def test_monthly_backup_override_replaces_daily_schedule(self):
+        bundle = MODULE.parent
+        lines = (bundle / 'exam-db-backup-monthly.conf').read_text(encoding='utf-8').splitlines()
+        schedules = [line for line in lines if line.startswith('OnCalendar=')]
+        self.assertEqual(schedules, ['OnCalendar=', 'OnCalendar=*-*-01 03:20:00 Asia/Seoul'])
+        installer = (bundle / 'install.sh').read_text(encoding='utf-8')
+        self.assertIn('systemctl disable exam-db-backup.service', installer)
+        self.assertIn('systemctl restart exam-db-backup.timer', installer)
+        self.assertNotIn('systemctl start exam-db-backup.service', installer)
+
     def test_build_progress_keeps_captured_output_and_state_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             job = deploy.Deployment(deploy.Config(state=Path(directory)))
@@ -493,8 +508,8 @@ class ProgressTests(unittest.TestCase):
                                                ['python', 'private-argument'], capture=True)
             self.assertEqual(result, '["0010"]')
             step.assert_called_once_with(Path(directory), ['python', 'private-argument'], capture=True)
-            self.assertIn('[3/8][build][running]', output.getvalue())
-            self.assertIn('[3/8][완료]', output.getvalue())
+            self.assertIn('[3/7][build][running]', output.getvalue())
+            self.assertIn('[3/7][완료]', output.getvalue())
             self.assertNotIn('private-argument', output.getvalue())
             record = json.loads((Path(directory) / 'status.json').read_text(encoding='utf-8'))
             self.assertEqual(record['schema_version'], 1)

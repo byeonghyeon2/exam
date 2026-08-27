@@ -15,8 +15,10 @@ CI runs backend lint, type checks and tests plus frontend lint, type checks, tes
 
 For the current Ubuntu server, use [approved release deployment](ubuntu-approved-deployment.md).
 Its installed `exam-deploy` command fetches main, reuses unchanged dependencies and builds an isolated release,
-backs up the DB, activates it and rolls back code/frontend on failed health checks.
+activates it and rolls back code/frontend on failed health checks.
 It never runs Alembic automatically: a schema mismatch stops for separate review.
 Full lint/type/test checks remain in GitHub CI, not repeated on the production server.
 The command does not wait for CI; verify CI success before invoking deployment.
+DB backups run only on the monthly timer (day 1, 03:20 Asia/Seoul plus existing jitter),
+not during deployment. Existing backup files and retention are unchanged.
 

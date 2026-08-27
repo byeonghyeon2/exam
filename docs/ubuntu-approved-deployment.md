@@ -24,26 +24,25 @@ sudo bash /path/to/deploy/ubuntu/install.sh
 
 ## 동작과 계약
 
-배포 잠금을 획득한 뒤 다음 8단계를 실행한다. 중복 실행은 종료 코드 75로 거절한다.
+배포 잠금을 획득한 뒤 다음 7단계를 실행한다. 중복 실행은 종료 코드 75로 거절한다.
 
-1. `[1/8]` 사전 점검: 중단된 전환, 운영 경로, 고정 origin, 작업 트리, 디스크, 서비스 확인.
-2. `[2/8]` main fetch, 현재/대상 커밋 표시, fast-forward 확인.
-3. `[3/8]` `/opt/apps/exam-releases/<run-id>-<commit>`에서 실행 준비/빌드. Python 의존성 재사용(변경 시만 새 환경 설치·pip check) → Node 의존성 복사 재사용(변경 시만 npm ci) → 프론트 build → 백엔드 import 확인 → Alembic head 조회 → 릴리스 권한 고정. 전체 lint/type/test는 서버에서 반복하지 않고 기존 GitHub CI에서 수행한다.
-4. `[4/8]` 기존 Alembic 파일 변경 여부와 DB revision/head 비교. 불일치 시 코드 20으로 중단. migration 자동 실행 없음.
-5. `[5/8]` `exam-db-backup.service` 성공 확인.
-6. `[6/8]` 복구 정보 기록, backend/frontend symlink 전환, backend 재시작. **이 단계부터 운영에 반영된다.**
-7. `[7/8]` backend 프로세스 작업 경로, health API, DB 상태 API, HTTPS frontend 실제 내용 확인. 재시도 중에도 진행 상황을 표시한다.
-8. `[8/8]` 최근 릴리스 3개와 직전 운영 릴리스를 보존하며 오래된 릴리스 정리 후 완료 표시. 알려진 릴리스 이외의 데이터는 삭제하지 않음.
+1. `[1/7]` 사전 점검: 중단된 전환, 운영 경로, 고정 origin, 작업 트리, 디스크, 서비스 확인.
+2. `[2/7]` main fetch, 현재/대상 커밋 표시, fast-forward 확인.
+3. `[3/7]` `/opt/apps/exam-releases/<run-id>-<commit>`에서 실행 준비/빌드. Python 의존성 재사용(변경 시만 새 환경 설치·pip check) → Node 의존성 복사 재사용(변경 시만 npm ci) → 프론트 build → 백엔드 import 확인 → Alembic head 조회 → 릴리스 권한 고정. 전체 lint/type/test는 서버에서 반복하지 않고 기존 GitHub CI에서 수행한다.
+4. `[4/7]` 기존 Alembic 파일 변경 여부와 DB revision/head 비교. 불일치 시 코드 20으로 중단. migration 자동 실행 없음.
+5. `[5/7]` 복구 정보 기록, backend/frontend symlink 전환, backend 재시작. **이 단계부터 운영에 반영된다.**
+6. `[6/7]` backend 프로세스 작업 경로, health API, DB 상태 API, HTTPS frontend 실제 내용 확인. 재시도 중에도 진행 상황을 표시한다.
+7. `[7/7]` 최근 릴리스 3개와 직전 운영 릴리스를 보존하며 오래된 릴리스 정리 후 완료 표시. 알려진 릴리스 이외의 데이터는 삭제하지 않음.
 
 전환 전에 실패하면 기존 서비스는 유지된다. 전환 후 실패하면 `[복구]`를 표시하고 두 symlink를 이전 대상으로 복구한 뒤 재시작/검증한다. DB 복원이나 downgrade는 실행하지 않는다.
 
 로그 예시 (숫자는 작업 순서이며 시간 기준 진행률이 아님):
 
 ```text
-[3/8][build][running] 3-1 Python 의존성 변경 없음 — 기존 환경 재사용 (설치 생략)
-[3/8][build][running] 3-4 Node 의존성 변경 없음 — 복사 재사용 (설치 생략) — 시작 (운영 서비스는 계속 실행 중)
-[6/8][activate][running] 백엔드 재시작 — 짧은 접속 중단 및 재로그인이 발생할 수 있음
-[8/8][complete][succeeded] 배포 완료 — 운영 검증 통과, DB 스키마 변경 없음
+[3/7][build][running] 3-1 Python 의존성 변경 없음 — 기존 환경 재사용 (설치 생략)
+[3/7][build][running] 3-4 Node 의존성 변경 없음 — 복사 재사용 (설치 생략) — 시작 (운영 서비스는 계속 실행 중)
+[5/7][activate][running] 백엔드 재시작 — 짧은 접속 중단 및 재로그인이 발생할 수 있음
+[7/7][complete][succeeded] 배포 완료 — 운영 검증 통과, DB 스키마 변경 없음
 ```
 
 주석은 스크립트 내부 설명이며 실행 화면에는 진행 로그가 나온다. 설치기는 별도로 `[설치 1/4]`~`[설치 4/4]`를 표시한다. 코드 업데이트만으로 설치된 controller가 교체되지는 않으므로, 로그 개선 적용에도 `install.sh` 재실행이 필요하다.
@@ -81,7 +80,8 @@ sudo bash /path/to/deploy/ubuntu/install.sh
 | Node 설치 | 매 배포 npm ci | manifest/lock/실행환경 변경 시만 설치, 나머지는 복사 |
 | lint·mypy·전체 테스트 | 서버에서 매번 실행 | 기존 GitHub CI에서 실행, 서버에서는 제외 |
 | 프론트 build / 백엔드 import 확인 | 빌드 + 전체 검사 | 운영 산출물 빌드 + 간단한 로딩 확인 |
-| DB 버전·백업·헬스체크·롤백 | 수행 | 데이터 보호와 실패 복구를 위해 유지 |
+| DB 버전·헬스체크·롤백 | 수행 | 유지 |
+| DB 백업 | 매일 + 배포 직전 | 사용자 요청으로 월 1회만, 배포 중에는 실행하지 않음 |
 
 ### 의존성 재사용 계약
 
@@ -93,7 +93,13 @@ sudo bash /path/to/deploy/ubuntu/install.sh
 - 앱 빌드의 HOME은 후보의 임시 `.build-home`이며 영구 빌드 홈을 수정할 수 없다. 빌드 후 임시 HOME/node_modules는 삭제한다. 원본 스냅샷은 릴리스 보관/정리 정책을 따른다.
 - Python 환경은 보관 중인 모든 릴리스가 더 이상 참조하지 않을 때만 정리한다. 새 환경 설치 실패 시 해당 미완성 환경만 정리하며 기존 환경은 유지한다. 강제 종료로 남은 식별 불가능한 환경은 자동 삭제하지 않는다.
 
-배포 명령은 **CI 결과를 자동 조회하거나 기다리지 않는다**. 운영자는 CI 성공을 확인하고 실행해야 한다. 프론트 빌드에는 기존 `tsc`가 포함되며 빌드/import/schema/backup/health 실패 시 배포를 중단하거나 복구한다. 무중단/성능 동일 보장은 아니며 실제 운영 전환 및 속도 비교는 별도 검증 대상이다.
+배포 명령은 **CI 결과를 자동 조회하거나 기다리지 않는다**. 운영자는 CI 성공을 확인하고 실행해야 한다. 프론트 빌드에는 기존 `tsc`가 포함되며 빌드/import/schema/health 실패 시 배포를 중단하거나 복구한다. 무중단/성능 동일 보장은 아니며 실제 운영 전환 및 속도 비교는 별도 검증 대상이다.
+
+## DB 백업 주기
+
+사용자 요청에 따라 월 1회만 예약하며 배포에서는 백업을 호출하지 않는다. 설치기가 `exam-db-backup.timer.d/30-monthly.conf`를 설치해 기존 일일 `OnCalendar`를 비운 뒤 매월 1일 03:20 Asia/Seoul로 대체한다. 기존 15분 분산과 Persistent(놓친 예약은 다음 가동 시 보완)는 유지한다. 백업 service 자체의 부팅 자동 실행은 해제하고 timer만 활성화한다.
+
+기존 백업 파일과 보관/삭제 스크립트는 변경하지 않는다. 월간 백업은 사고 시 마지막 백업 이후 최대 약 한 달의 변경분을 복구하지 못할 수 있다. 코드 롤백은 DB 데이터를 복구하지 않는다. 설치 후 `systemctl list-timers exam-db-backup.timer --no-pager`로 다음 실행 시각을 확인한다.
 
 ## 상태 및 오류
 
@@ -126,7 +132,13 @@ sudo systemctl start --no-block exam-deploy.service
 
 격리 테스트: `python -m unittest discover -s deploy/ubuntu/tests -v` (Linux, 운영 서비스/DB 호출 없음).
 
-구현 검증: Ubuntu에서 격리 테스트 27개, Bash/POSIX 셸 문법, Python 핵심 lint 통과. Windows에서는 symlink 권한 제한으로 트랜잭션 테스트를 실행할 수 없어 Linux에서 검증했다. 이 결과는 실제 운영 배포 성공을 의미하지 않으며, 설치 후 최초 실행/헬스체크가 별도로 필요하다.
+구현 검증: Ubuntu에서 격리 테스트 29개, Bash/POSIX 셸 문법, Python 핵심 lint 통과. Windows에서는 symlink 권한 제한으로 트랜잭션 테스트를 실행할 수 없어 Linux에서 검증했다. 이 결과는 실제 운영 배포 성공을 의미하지 않으며, 설치 후 최초 실행/헬스체크가 별도로 필요하다.
+
+### 2026-08-27 월간 백업 요청
+
+- 변경: 일일 타이머를 매월 1일로 대체하는 drop-in과 설치 절차 추가. 배포 전 백업 호출 제거. 기존 백업 파일/보관 스크립트 및 패키지 재사용/CI 정책은 변경하지 않음.
+- PASS: 배포가 백업을 호출하지 않는지, 기존 일일 일정을 초기화하는지 포함한 29개 테스트와 셸 문법/핵심 lint. `systemd-analyze calendar`는 다음 월간 예약을 2026-09-01 03:20 KST로 해석했다(기존 최대 15분 분산 별도).
+- BLOCKED: 서버 적용은 bhadmin의 대화형 sudo 인증 필요. 설정 파일 준비/검증만 완료했으며, 월간 일정 적용과 실제 백업 실행 검증은 아직 하지 않았다.
 
 ### 2026-08-27 경량화 검증
 
