@@ -43,7 +43,7 @@ def _read_json(path: Path) -> Any:
 
 
 def _dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+    return datetime.fromisoformat(value) if value else None
 
 
 def _excluded_ids(path: Path) -> set[str]:

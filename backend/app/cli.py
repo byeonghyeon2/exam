@@ -3,14 +3,15 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from sqlalchemy import select
+
 from app.db.session import SessionLocal
 from app.importers.dataset_importer import import_dataset
 from app.models.entities import Certification, Domain
-from sqlalchemy import select
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+    return datetime.fromisoformat(value) if value else None
 
 
 def load_dataset_metadata(db, directory: Path) -> None:

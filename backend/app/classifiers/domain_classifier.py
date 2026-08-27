@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -176,7 +175,8 @@ def classify_questions(
                 else:
                     question.classification_status = "needs_review"
                     needs_review += 1
-        except Exception as exc:
+        # Batch boundary: record a failed batch and continue, including unexpected adapter errors.
+        except Exception as exc:  # noqa: BLE001
             for question in batch:
                 question.classification_status = "failed"
                 question.classification_reason = str(exc)[:2000]

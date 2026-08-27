@@ -8,7 +8,13 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import Certification, Domain, Question, QuestionAnswerVersion, QuestionChoice
+from app.models.entities import (
+    Certification,
+    Domain,
+    Question,
+    QuestionAnswerVersion,
+    QuestionChoice,
+)
 from app.schemas.api import DatasetQuestion
 
 
@@ -75,4 +81,3 @@ def import_jsonl(db: Session, path: Path, mode: str) -> ImportResult:
     if mode != "dry-run":
         db.commit()
     return ImportResult(total, imported, errors)
-

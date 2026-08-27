@@ -114,7 +114,11 @@ class Deployment:
                 import grp
                 os.chown(temporary, 0, grp.getgrnam(self.c.operator).gr_gid)
             os.replace(temporary, destination)
-        print(f'[{phase}] {status}: {message}', flush=True)
+        # UI가 읽는 phase/status는 유지하고, 터미널에는 사람이 읽을 단계 번호를 붙인다.
+        steps = {'preflight': '1/8', 'fetch': '2/8', 'build': '3/8',
+                 'schema': '4/8', 'backup': '5/8', 'activate': '6/8',
+                 'health': '7/8', 'complete': '8/8', 'rollback': '복구'}
+        print(f'[{steps.get(phase, phase)}][{phase}][{status}] {message}', flush=True)
 
     def command(self, args: list[str], *, capture: bool = False) -> str:
         try:
@@ -201,6 +205,18 @@ class Deployment:
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                            env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8'})
 
+    def logged_build_step(self, label: str, cwd: Path, args: list[str], *, capture: bool = False) -> str:
+        # 명령 인자/환경값을 재출력하지 않는다. 고정 설명만 남겨 비밀값 노출을 피한다.
+        self.emit('running', 'build', label + ' — 시작 (운영 서비스는 계속 실행 중)')
+        started = time.monotonic()
+        try:
+            result = self.build_step(cwd, args, capture=capture)
+        except DeploymentError as error:
+            # 최종 status.json에서도 어느 하위 검사가 실패했는지 알 수 있게 한다.
+            raise DeploymentError(f'{label}: {error}', error.code) from error
+        print(f'[3/8][완료] {label} ({time.monotonic() - started:.1f}초)', flush=True)
+        return result
+
     def prepare(self) -> None:
         assert self.candidate is not None
         self.candidate.mkdir(mode=0o755)
@@ -217,14 +233,22 @@ class Deployment:
         self.change_owner(self.candidate, account.pw_uid, account.pw_gid)
         backend = self.candidate / 'backend'
         python = str(backend / '.venv/bin/python')
-        self.build_step(backend, ['/usr/bin/python3', '-m', 'venv', '.venv'])
-        self.build_step(backend, [python, '-m', 'pip', 'install', '-e', '.[dev]'])
-        for args in ([python, '-m', 'pip', 'check'], [python, '-m', 'ruff', 'check', '.'],
-                     [python, '-m', 'mypy', 'app'], [python, '-m', 'pytest']):
-            self.build_step(backend, args)
+        # 3단계: 별도 릴리스에서만 설치/검증한다. 아직 운영 링크나 DB는 바꾸지 않는다.
+        self.logged_build_step('3-1 Python 가상환경 생성', backend, ['/usr/bin/python3', '-m', 'venv', '.venv'])
+        self.logged_build_step('3-2 Python 의존성 설치', backend, [python, '-m', 'pip', 'install', '-e', '.[dev]'])
+        for label, args in (
+                ('3-3 Python 의존성 호환성 검사', [python, '-m', 'pip', 'check']),
+                ('3-4 백엔드 코드 검사 (Ruff)', [python, '-m', 'ruff', 'check', '.']),
+                ('3-5 백엔드 타입 검사 (mypy)', [python, '-m', 'mypy', 'app']),
+                ('3-6 백엔드 테스트 (pytest)', [python, '-m', 'pytest'])):
+            self.logged_build_step(label, backend, args)
         frontend = self.candidate / 'frontend'
-        for args in (['npm', 'ci'], ['npm', 'run', 'lint'], ['npm', 'test'], ['npm', 'run', 'build']):
-            self.build_step(frontend, args)
+        for label, args in (
+                ('3-7 프론트엔드 의존성 설치', ['npm', 'ci']),
+                ('3-8 프론트엔드 코드 검사', ['npm', 'run', 'lint']),
+                ('3-9 프론트엔드 테스트', ['npm', 'test']),
+                ('3-10 프론트엔드 운영 빌드', ['npm', 'run', 'build'])):
+            self.logged_build_step(label, frontend, args)
         dist = frontend / 'dist'
         for directory in (backend, frontend, dist, backend / 'alembic', backend / 'alembic/versions'):
             if directory.is_symlink() or not directory.is_dir():
@@ -239,13 +263,15 @@ class Deployment:
                       'print(json.dumps(ScriptDirectory.from_config(Config("alembic.ini")).get_heads()))')
         heads_file = backend / '.deploy-heads.json'
         # This subprocess runs as the build user; stdout is validated before activation.
-        heads = self.build_step(backend, [python, '-c', heads_code], capture=True)
+        heads = self.logged_build_step('3-11 Alembic 목표 버전 확인 (DB 접속 없음)',
+                                       backend, [python, '-c', heads_code], capture=True)
         parsed = json.loads(heads)
         if not isinstance(parsed, list) or len(parsed) != 1 or not re.fullmatch('[A-Za-z0-9_]+', parsed[0]):
             raise DeploymentError('Exactly one valid Alembic head is required', 20)
         if heads_file.is_symlink() or (self.candidate / '.exam-release.json').exists() or (self.candidate / '.exam-release.json').is_symlink():
             raise DeploymentError('Unexpected release metadata path')
         heads_file.write_text(json.dumps(parsed))
+        self.emit('running', 'build', '3-12 빌드 임시 의존성 정리 및 릴리스 권한 고정')
         if (frontend / 'node_modules').is_dir():
             shutil.rmtree(frontend / 'node_modules')
         self.freeze_release(self.candidate)
@@ -304,7 +330,9 @@ class Deployment:
 
     def healthy(self, release: Path) -> None:
         expected_index = (self.c.web.resolve() / 'index.html').read_bytes()
-        for _ in range(30):
+        for attempt in range(30):
+            if attempt % 5 == 0:
+                print(f'[{self.phase}] 상태 확인 {attempt + 1}/30: 백엔드 · DB API · HTTPS', flush=True)
             try:
                 with urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3) as response:
                     if json.load(response).get('status') != 'ok':
@@ -346,37 +374,44 @@ class Deployment:
 
     def execute(self) -> int:
         try:
-            self.emit('running', 'preflight', 'Checking fixed deployment target')
+            # 1~5: 운영 코드/DB 스키마를 변경하지 않는 준비 구간이다.
+            self.emit('running', 'preflight', '사전 점검: 중단된 배포, 운영 경로, 서버 소스 변경, 디스크, 서비스 확인')
             self.preflight()
-            self.emit('running', 'fetch', 'Fetching origin/main; live source and .env are untouched')
+            self.emit('running', 'fetch', 'Git main 최신 소스 가져오기 — 원본 작업 폴더와 .env는 그대로 유지')
             self.target = self.fetch()
             current = self.active_commit()
+            self.emit('running', 'fetch', f'현재 {current[:12]} → 대상 {self.target[:12]} / 커밋 이력 확인')
             self.check_fast_forward(current)
             if current == self.target and self.previous != self.c.source:
-                self.emit('noop', 'complete', 'Already running the latest main commit')
+                self.emit('noop', 'complete', '이미 최신 커밋 실행 중 — 빌드·백업·재시작 없이 종료')
                 return 0
             self.candidate = self.c.releases / f'{self.run_id}-{self.target[:12]}'
-            self.emit('running', 'build', 'Building and testing as an isolated unprivileged user')
+            self.emit('running', 'build', '별도 릴리스 준비 — exam-build 계정으로 빌드·테스트 (운영 서비스 유지)')
             self.prepare()
-            self.emit('running', 'schema', 'Checking schema compatibility without migrations')
+            self.emit('running', 'schema', 'DB 버전과 기존 마이그레이션 비교 — 스키마 변경이 필요하면 중단')
             self.check_schema()
-            self.emit('running', 'backup', 'Backing up production DB before activation')
+            self.emit('running', 'backup', '운영 DB 백업 및 성공 여부 확인 — 실패하면 전환하지 않음')
             self.backup()
-            self.emit('running', 'activate', 'Switching backend and frontend releases')
+            # 6: 여기부터 운영에 반영된다. 복구 정보 기록 후 두 링크를 전환한다.
+            self.emit('running', 'activate', '운영 반영 시작: 복구 정보 기록 → 백엔드/프론트엔드 링크 전환')
             self.checkpoint()
             self.switched = True  # Covers a failure between the two link replacements.
             atomic_link(self.c.current, self.candidate)
             atomic_link(self.c.web, self.candidate / 'frontend/dist')
+            self.emit('running', 'activate', '백엔드 재시작 — 짧은 접속 중단 및 재로그인이 발생할 수 있음')
             self.restart()
-            self.emit('running', 'health', 'Checking backend process, DB API and HTTPS frontend')
+            # 7: 프로세스가 새 코드를 실행하고 HTTPS가 새 화면을 반환하는지 확인한다.
+            self.emit('running', 'health', '운영 검증: 백엔드 실행 경로 · health API · DB API · HTTPS 화면')
             self.healthy(self.candidate)
             self.finished = True
             (self.c.state / 'pending.json').unlink()
-            self.emit('succeeded', 'complete', 'Deployment healthy; no database schema changes made')
+            # 8: 검증된 배포만 완료 처리. 정리는 알려진 오래된 릴리스에 한정한다.
+            print('[8/8][정리] 오래된 릴리스 정리 — 최근 3개와 직전 운영 릴리스 보존', flush=True)
             try:
                 self.prune()
             except OSError:
-                print('Warning: old release cleanup deferred; active deployment is healthy', flush=True)
+                print('[8/8][경고] 오래된 릴리스 정리 보류 — 운영 서비스 상태는 정상', flush=True)
+            self.emit('succeeded', 'complete', '배포 완료 — 운영 검증 통과, DB 스키마 변경 없음')
             return 0
         except Exception as error:
             code = error.code if isinstance(error, DeploymentError) else 1
@@ -385,7 +420,8 @@ class Deployment:
             if self.switched and not self.finished:
                 try:
                     assert self.previous is not None and self.previous_web is not None
-                    self.emit('running', 'rollback', 'Restoring previous code/frontend; DB is not restored')
+                    # 전환 후 실패만 이전 코드로 복구한다. DB 복원/downgrade는 하지 않는다.
+                    self.emit('running', 'rollback', f'배포 실패 ({message}) — 이전 코드/화면 복구 및 재검증, DB 복원 없음')
                     atomic_link(self.c.current, self.previous)
                     atomic_link(self.c.web, self.previous_web)
                     self.restart()
@@ -393,7 +429,7 @@ class Deployment:
                     (self.c.state / 'pending.json').unlink(missing_ok=True)
                     status = 'rolled_back'
                 except Exception:
-                    self.emit('rollback_failed', 'rollback', 'Manual intervention required; releases and DB preserved')
+                    self.emit('rollback_failed', 'rollback', '자동 복구 검증 실패 — 수동 확인 필요, 릴리스와 DB 보존')
                     return 2
             self.emit(status, self.phase, message)
             self.cleanup_candidate()

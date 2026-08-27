@@ -1,5 +1,6 @@
 """No production services, secrets, network, or third-party packages are used."""
 import importlib.util
+from contextlib import redirect_stdout
 import io
 import json
 from pathlib import Path
@@ -260,6 +261,41 @@ class ArchiveTests(unittest.TestCase):
                 output.addfile(item, io.BytesIO(b'example'))
             deploy.unpack_archive(archive, root / 'out')
             self.assertEqual((root / 'out/backend/.env.production.example').read_text(), 'example')
+
+
+class ProgressTests(unittest.TestCase):
+    def test_build_progress_keeps_captured_output_and_state_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job = deploy.Deployment(deploy.Config(state=Path(directory)))
+            output = io.StringIO()
+            with patch.object(deploy.os, 'geteuid', return_value=1000, create=True), \
+                    patch.object(job, 'build_step', return_value='["0010"]') as step, \
+                    redirect_stdout(output):
+                result = job.logged_build_step('3-11 버전 확인', Path(directory),
+                                               ['python', 'private-argument'], capture=True)
+            self.assertEqual(result, '["0010"]')
+            step.assert_called_once_with(Path(directory), ['python', 'private-argument'], capture=True)
+            self.assertIn('[3/8][build][running]', output.getvalue())
+            self.assertIn('[3/8][완료]', output.getvalue())
+            self.assertNotIn('private-argument', output.getvalue())
+            record = json.loads((Path(directory) / 'status.json').read_text(encoding='utf-8'))
+            self.assertEqual(record['schema_version'], 1)
+            self.assertEqual(record['phase'], 'build')
+            self.assertEqual(record['status'], 'running')
+            self.assertIn('3-11', record['message'])
+
+    def test_failed_build_does_not_print_completion_or_swallow_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job = deploy.Deployment(deploy.Config(state=Path(directory)))
+            output = io.StringIO()
+            with patch.object(deploy.os, 'geteuid', return_value=1000, create=True), \
+                    patch.object(job, 'build_step', side_effect=deploy.DeploymentError('failed')), \
+                    redirect_stdout(output), self.assertRaises(deploy.DeploymentError) as failure:
+                job.logged_build_step('3-4 Ruff 검사', Path(directory), ['false'])
+            self.assertIn('3-4 Ruff 검사', str(failure.exception))
+            self.assertEqual(failure.exception.code, 1)
+            self.assertIn('3-4 Ruff 검사', output.getvalue())
+            self.assertNotIn('[완료]', output.getvalue())
 
 
 if __name__ == '__main__':
