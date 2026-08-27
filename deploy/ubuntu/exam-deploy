@@ -1,0 +1,8 @@
+#!/bin/sh
+# Stable entry point for terminal use and the future management UI's systemd job.
+set -eu
+if [ "$#" -ne 0 ]; then
+    echo 'Usage: sudo /usr/local/sbin/exam-deploy (deploys origin/main only)' >&2
+    exit 64
+fi
+exec /usr/bin/python3 -I /usr/local/lib/exam-deploy/exam_deploy.py
