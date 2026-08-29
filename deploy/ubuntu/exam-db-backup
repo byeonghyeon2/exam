@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+backup_dir=/var/backups/apps/exam/mysql
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+temporary="${backup_dir}/.cert_exam-${timestamp}.sql.gz.tmp"
+temporary_checksum="${backup_dir}/.cert_exam-${timestamp}.sql.gz.sha256.tmp"
+final="${backup_dir}/cert_exam-${timestamp}.sql.gz"
+
+prune_old_backups() {
+  local index
+  local -a archives
+  mapfile -t archives < <(
+    while IFS= read -r archive; do
+      checksum="$archive.sha256"
+      [[ -f $checksum && ! -L $checksum ]] || continue
+      sha256sum --check --status "$checksum" || continue
+      printf '%s\n' "${archive##*/}"
+    done < <(find "$backup_dir" -xdev -maxdepth 1 -type f \
+      -name 'cert_exam-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.sql.gz' \
+      -print | LC_ALL=C sort -r)
+  )
+  for ((index=3; index < ${#archives[@]}; index++)); do
+    rm -f -- "$backup_dir/${archives[index]}" "$backup_dir/${archives[index]}.sha256"
+  done
+}
+
+if [[ ${1-} == --prune-only && $# -eq 1 ]]; then
+  [[ -d $backup_dir && ! -L $backup_dir ]] || { echo 'Unsafe backup directory' >&2; exit 1; }
+  prune_old_backups
+  echo 'Pruned old backups (latest 3 sets retained)'
+  exit 0
+fi
+[[ $# -eq 0 ]] || { echo 'Usage: exam-db-backup [--prune-only]' >&2; exit 64; }
+
+install -d -o root -g exam -m 0750 "$backup_dir"
+trap 'rm -f -- "$temporary" "$temporary_checksum"' EXIT
+
+# 새 백업이 완성되기 전에는 기존 백업을 하나도 삭제하지 않는다.
+mysqldump \
+  --defaults-extra-file=/etc/exam/mysql-backup.cnf \
+  --single-transaction \
+  --quick \
+  --routines \
+  --triggers \
+  --events \
+  --hex-blob \
+  --no-tablespaces \
+  cert_exam | gzip -9 > "$temporary"
+test -s "$temporary"
+gzip -t "$temporary"
+mv -- "$temporary" "$final"
+sha256sum "$final" > "$temporary_checksum"
+mv -- "$temporary_checksum" "$final.sha256"
+
+# UTC 타임스탬프 파일명 역순으로 최신 3세트를 보존한다.
+prune_old_backups
+
+echo "Created $final (latest 3 backup sets retained)"

@@ -31,6 +31,7 @@ class Config:
     source: Path = Path('/opt/apps/exam')
     releases: Path = Path('/opt/apps/exam-releases')
     environments: Path = Path('/opt/apps/exam-python-envs')
+    node_environments: Path = Path('/opt/apps/exam-node-envs')
     current: Path = Path('/opt/apps/exam-current')
     web: Path = Path('/var/www/apps/exam/current')
     state: Path = Path('/var/lib/exam-deploy')
@@ -95,10 +96,13 @@ class Deployment:
         self.target = ''
         self.phase = 'preflight'
         self.started = utcnow()
+        self.started_clock = time.monotonic()
         self.finished = False
         self.environment: Path | None = None
         self.new_environment: Path | None = None
         self.writable_environment: Path | None = None
+        self.node_environment: Path | None = None
+        self.new_node_environment: Path | None = None
 
     def emit(self, status: str, phase: str, message: str) -> None:
         self.phase = phase
@@ -108,6 +112,7 @@ class Deployment:
             'updated_at': utcnow(), 'target_commit': self.target,
             'previous_release': str(self.previous or ''),
             'candidate_release': str(self.candidate or ''),
+            'elapsed_seconds': round(time.monotonic() - self.started_clock, 2),
         }
         self.c.state.mkdir(exist_ok=True)
         history = self.c.state / 'history'
@@ -159,6 +164,11 @@ class Deployment:
             raise DeploymentError('At least 3 GiB free disk space is required')
         if not self.c.environments.is_dir() or self.c.environments.is_symlink():
             raise DeploymentError('Install updated deployment support first; Python environment store missing')
+        if not self.c.node_environments.is_dir() or self.c.node_environments.is_symlink():
+            raise DeploymentError('Install updated deployment support first; Node environment store missing')
+        if (self.c.node_environments.stat().st_uid != 0
+                or self.c.node_environments.stat().st_mode & 0o022):
+            raise DeploymentError('Unsafe Node environment store permissions')
         self.command(['systemctl', 'is-active', '--quiet', 'exam-backend.service'])
 
     def fetch(self) -> str:
@@ -337,10 +347,22 @@ class Deployment:
                 return False
         return True
 
+    @classmethod
+    def immutable_node_modules(cls, root: Path) -> bool:
+        if not cls.reusable_node_modules(root):
+            return False
+        return all(path.is_symlink() or (path.stat().st_uid == 0 and not path.stat().st_mode & 0o022)
+                   for path in [root, *root.rglob('*')])
+
     def prepare_frontend(self, frontend: Path) -> str:
         if (frontend / 'node_modules').exists() or (frontend / 'node_modules').is_symlink():
             raise DeploymentError('Source must not supply node_modules')
         key = self.frontend_dependency_key(frontend)
+        if key:
+            for environment in sorted(self.c.node_environments.glob(f'{key}-*')):
+                if self.node_environment_ready(environment, key):
+                    self.node_environment = environment
+                    break
         previous_key = ''
         if self.previous is not None and self.previous != self.c.source:
             try:
@@ -348,28 +370,56 @@ class Deployment:
             except (OSError, ValueError, AttributeError):
                 pass
         previous_modules = self.previous / '.node-dependencies' if self.previous else Path('/nonexistent')
-        if key and key == previous_key and self.reusable_node_modules(previous_modules):
-            # 원본을 수정하지 않는 복사다. hardlink/공유 쓰기 권한은 사용하지 않는다.
-            self.logged_build_step('3-4 Node 의존성 변경 없음 — 복사 재사용 (설치 생략)', frontend,
-                                   ['cp', '-R', '--preserve=mode,timestamps', '--reflink=auto',
-                                    str(previous_modules), str(frontend / 'node_modules')])
-        else:
-            self.logged_build_step('3-4 변경된 프론트엔드 의존성 설치', frontend,
-                                   ['npm', 'ci', '--prefer-offline', '--no-audit', '--no-fund'])
         snapshot = frontend.parent / '.node-dependencies'
         if snapshot.exists() or snapshot.is_symlink():
             raise DeploymentError('Source must not supply dependency snapshots')
-        if key and self.reusable_node_modules(frontend / 'node_modules'):
-            # 앱 빌드가 node_modules를 바꿔도 다음 배포로 전파되지 않는 원본 스냅샷.
-            # 부모까지 root 소유로 잠가 빌드 계정의 스냅샷 교체/변조를 막는다.
-            os.chown(frontend.parent, 0, 0)
-            frontend.parent.chmod(0o755)
-            shutil.copytree(frontend / 'node_modules', snapshot, symlinks=True)
-            self.freeze_release(snapshot)
+        modules = frontend / 'node_modules'
+        if self.node_environment is None:
+            # 구 버전의 검증된 원본은 첫 전환에만 복사한다. 기존 릴리스는 수정하지 않는다.
+            if (key and key == previous_key and self.immutable_node_modules(previous_modules)):
+                self.logged_build_step('3-4 기존 Node 원본을 새 캐시로 1회 이전 (설치 생략)', frontend,
+                                       ['cp', '-R', '--preserve=mode,timestamps', '--reflink=auto',
+                                        str(previous_modules), str(modules)])
+            else:
+                self.logged_build_step('3-4 변경된 프론트엔드 의존성 설치', frontend,
+                                       ['npm', 'ci', '--prefer-offline', '--no-audit', '--no-fund'])
+            if not self.reusable_node_modules(modules):
+                raise DeploymentError('Unsafe Node dependency tree')
+            self.node_environment = self.new_node_environment = (
+                self.c.node_environments / f'{key or "uncached"}-{self.run_id}')
+            self.node_environment.mkdir(mode=0o755)
+            # 같은 /opt 파일시스템에서 이동: 설치 직후 원본을 복제하지 않는다.
+            modules.rename(self.node_environment / 'node_modules')
+            self.freeze_release(self.node_environment)
+            marker = self.node_environment / '.exam-node-env.json'
+            marker.write_text(json.dumps({'key': key}) + '\n')
+            marker.chmod(0o644)
         else:
-            key = ''
-        self.logged_build_step('3-5 프론트엔드 운영 빌드', frontend, ['npm', 'run', 'build'])
+            self.emit('running', 'build', '3-4 Node 의존성 변경 없음 — 읽기 전용 연결 (설치·복사 생략)')
+        os.chown(frontend.parent, 0, 0)
+        frontend.parent.chmod(0o755)
+        snapshot.symlink_to(self.node_environment / 'node_modules', target_is_directory=True)
+        modules.symlink_to(self.node_environment / 'node_modules', target_is_directory=True)
+        # Vite 기본 config bundler의 node_modules/.vite-temp 쓰기를 피한다.
+        self.logged_build_step('3-5 프론트엔드 운영 빌드', frontend,
+                               ['npm', 'run', 'build', '--', '--configLoader', 'runner'])
+        if modules.resolve() != self.node_environment / 'node_modules':
+            raise DeploymentError('Node environment link changed during build')
         return key
+
+    @staticmethod
+    def node_environment_ready(path: Path, key: str) -> bool:
+        marker = path / '.exam-node-env.json'
+        try:
+            return (not path.is_symlink() and path.is_dir()
+                    and path.stat().st_uid == 0 and not path.stat().st_mode & 0o022
+                    and not marker.is_symlink() and marker.stat().st_uid == 0
+                    and not marker.stat().st_mode & 0o022
+                    and json.loads(marker.read_text()).get('key') == key
+                    and not (path / 'node_modules').is_symlink()
+                    and (path / 'node_modules/.package-lock.json').is_file())
+        except (OSError, ValueError, AttributeError):
+            return False
 
     def prepare(self) -> None:
         assert self.candidate is not None
@@ -424,7 +474,11 @@ class Deployment:
         if (backend / '.venv').resolve() != self.environment:
             raise DeploymentError('Python environment link changed during build')
         shutil.rmtree(temporary_home)
-        shutil.rmtree(frontend / 'node_modules')
+        modules = frontend / 'node_modules'
+        if (not modules.is_symlink()
+                or modules.resolve() != self.node_environment / 'node_modules'):
+            raise DeploymentError('Refusing unexpected Node environment cleanup')
+        modules.unlink()
         self.freeze_release(self.candidate)
         (self.candidate / '.exam-release.json').write_text(json.dumps({
             'commit': self.target, 'created_at': utcnow(), 'run_id': self.run_id,
@@ -509,6 +563,7 @@ class Deployment:
             return
         shutil.rmtree(self.candidate)
         self.prune_environments()
+        self.prune_node_environments()
 
     def prune_environments(self) -> None:
         # 보관 중인 어떤 릴리스라도 참조하는 환경은 삭제하지 않는다. 정체불명 경로도 보존한다.
@@ -536,6 +591,23 @@ class Deployment:
             if release not in keep and release.parent.resolve() == self.c.releases.resolve():
                 shutil.rmtree(release)
         self.prune_environments()
+        self.prune_node_environments()
+
+    def prune_node_environments(self) -> None:
+        referenced = {(release / '.node-dependencies').resolve().parent
+                      for release in self.c.releases.iterdir()
+                      if release.is_dir() and not release.is_symlink()}
+        if not self.c.node_environments.is_dir():
+            return
+        for path in self.c.node_environments.iterdir():
+            if (path.is_symlink() or path in referenced
+                    or path.parent.resolve() != self.c.node_environments.resolve()):
+                continue
+            key = path.name.split('-', 1)[0]
+            if ((re.fullmatch('[0-9a-f]{64}|uncached', key)
+                 and self.node_environment_ready(path, '' if key == 'uncached' else key))
+                    or path == self.new_node_environment):
+                shutil.rmtree(path)
 
     def execute(self) -> int:
         try:
@@ -598,6 +670,11 @@ class Deployment:
             self.emit(status, self.phase, message)
             self.cleanup_candidate()
             return code
+        finally:
+            elapsed = time.monotonic() - self.started_clock
+            minutes, seconds = divmod(elapsed, 60)
+            print(f'[배포 종료] 총 배포 소요 시간: {int(minutes)}분 {seconds:.1f}초 ({elapsed:.1f}초)',
+                  flush=True)
 
 
 def main() -> int:

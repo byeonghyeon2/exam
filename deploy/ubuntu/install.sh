@@ -7,10 +7,10 @@ umask 027
 bundle=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 # 설치는 도구와 서비스 설정만 갱신한다. 소스 배포/DB 변경/백엔드 재시작은 없다.
 echo '[설치 1/4] 필수 파일·명령·기존 서버 구성 확인'
-for file in exam-deploy exam_deploy.py exam-deploy.service exam-backend-release.conf exam-db-backup-monthly.conf; do
+for file in exam-deploy exam_deploy.py exam-deploy.service exam-backend-release.conf exam-db-backup-monthly.conf exam-db-backup; do
     [[ -f "$bundle/$file" && ! -L "$bundle/$file" ]] || exit 1
 done
-for tool in git python3 node npm mysql systemctl systemd-run runuser tar flock cp; do
+for tool in git python3 node npm mysql systemctl systemd-run runuser tar flock cp find sort gzip sha256sum; do
     command -v "$tool" >/dev/null || { echo "Missing dependency: $tool" >&2; exit 1; }
 done
 id bhadmin >/dev/null
@@ -38,7 +38,7 @@ if ! id exam-build >/dev/null 2>&1; then
 fi
 [[ $(id -nG exam-build) == exam-build ]] || { echo 'Build account has unexpected groups.' >&2; exit 1; }
 install -d -o exam-build -g exam-build -m 0700 /var/lib/exam-build
-install -d -o root -g root -m 0755 /opt/apps/exam-releases /opt/apps/exam-python-envs /usr/local/lib/exam-deploy
+install -d -o root -g root -m 0755 /opt/apps/exam-releases /opt/apps/exam-python-envs /opt/apps/exam-node-envs /usr/local/lib/exam-deploy
 install -d -o root -g bhadmin -m 0750 /var/lib/exam-deploy /var/lib/exam-deploy/history
 echo '[설치 3/4] 배포 명령과 systemd 설정 설치'
 install -o root -g root -m 0644 "$bundle/exam_deploy.py" /usr/local/lib/exam-deploy/exam_deploy.py
@@ -48,6 +48,8 @@ install -d -o root -g root -m 0755 /etc/systemd/system/exam-backend.service.d
 install -o root -g root -m 0644 "$bundle/exam-backend-release.conf" /etc/systemd/system/exam-backend.service.d/30-release.conf
 install -d -o root -g root -m 0755 /etc/systemd/system/exam-db-backup.timer.d
 install -o root -g root -m 0644 "$bundle/exam-db-backup-monthly.conf" /etc/systemd/system/exam-db-backup.timer.d/30-monthly.conf
+install -o root -g root -m 0750 "$bundle/exam-db-backup" /usr/local/sbin/exam-db-backup
+/usr/local/sbin/exam-db-backup --prune-only
 echo '[설치 4/4] systemd 설정 검증 및 다시 읽기 (백엔드 재시작 없음)'
 systemd-analyze verify /etc/systemd/system/exam-deploy.service
 systemctl daemon-reload
@@ -57,4 +59,4 @@ systemctl enable exam-db-backup.timer
 systemctl restart exam-db-backup.timer
 echo 'INSTALLED: sudo /usr/local/sbin/exam-deploy'
 echo 'No deployment or backend restart was performed by this installer.'
-echo 'DB backup: monthly on day 1, 03:20 Asia/Seoul (+ existing jitter). No backup during deployment.'
+echo 'DB backup: monthly on day 1, 03:20 Asia/Seoul (+ existing jitter); latest 3 sets retained.'

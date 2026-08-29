@@ -20,5 +20,5 @@ It never runs Alembic automatically: a schema mismatch stops for separate review
 Full lint/type/test checks remain in GitHub CI, not repeated on the production server.
 The command does not wait for CI; verify CI success before invoking deployment.
 DB backups run only on the monthly timer (day 1, 03:20 Asia/Seoul plus existing jitter),
-not during deployment. Existing backup files and retention are unchanged.
+not during deployment. A successful backup retains the latest three verified backup sets.
 

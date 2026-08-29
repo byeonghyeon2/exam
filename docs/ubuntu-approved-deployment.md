@@ -28,7 +28,7 @@ sudo bash /path/to/deploy/ubuntu/install.sh
 
 1. `[1/7]` 사전 점검: 중단된 전환, 운영 경로, 고정 origin, 작업 트리, 디스크, 서비스 확인.
 2. `[2/7]` main fetch, 현재/대상 커밋 표시, fast-forward 확인.
-3. `[3/7]` `/opt/apps/exam-releases/<run-id>-<commit>`에서 실행 준비/빌드. Python 의존성 재사용(변경 시만 새 환경 설치·pip check) → Node 의존성 복사 재사용(변경 시만 npm ci) → 프론트 build → 백엔드 import 확인 → Alembic head 조회 → 릴리스 권한 고정. 전체 lint/type/test는 서버에서 반복하지 않고 기존 GitHub CI에서 수행한다.
+3. `[3/7]` `/opt/apps/exam-releases/<run-id>-<commit>`에서 실행 준비/빌드. Python 의존성 재사용(변경 시만 새 환경 설치·pip check) → Node 읽기 전용 환경 연결(변경 시만 npm ci) → 프론트 build → 백엔드 import 확인 → Alembic head 조회 → 릴리스 권한 고정. 전체 lint/type/test는 서버에서 반복하지 않고 기존 GitHub CI에서 수행한다.
 4. `[4/7]` 기존 Alembic 파일 변경 여부와 DB revision/head 비교. 불일치 시 코드 20으로 중단. migration 자동 실행 없음.
 5. `[5/7]` 복구 정보 기록, backend/frontend symlink 전환, backend 재시작. **이 단계부터 운영에 반영된다.**
 6. `[6/7]` backend 프로세스 작업 경로, health API, DB 상태 API, HTTPS frontend 실제 내용 확인. 재시도 중에도 진행 상황을 표시한다.
@@ -40,7 +40,7 @@ sudo bash /path/to/deploy/ubuntu/install.sh
 
 ```text
 [3/7][build][running] 3-1 Python 의존성 변경 없음 — 기존 환경 재사용 (설치 생략)
-[3/7][build][running] 3-4 Node 의존성 변경 없음 — 복사 재사용 (설치 생략) — 시작 (운영 서비스는 계속 실행 중)
+[3/7][build][running] 3-4 Node 의존성 변경 없음 — 읽기 전용 연결 (설치·복사 생략)
 [5/7][activate][running] 백엔드 재시작 — 짧은 접속 중단 및 재로그인이 발생할 수 있음
 [7/7][complete][succeeded] 배포 완료 — 운영 검증 통과, DB 스키마 변경 없음
 ```
@@ -61,7 +61,7 @@ sudo bash /path/to/deploy/ubuntu/install.sh
 | frontend current | `/var/www/apps/exam/current` |
 | 릴리스 | `/opt/apps/exam-releases` |
 | 읽기 전용 Python 의존성 환경 | `/opt/apps/exam-python-envs/<key>-<run-id>` |
-| 빌드 전 Node 의존성 원본 | `<release>/.node-dependencies` |
+| 읽기 전용 Node 의존성 환경 | `/opt/apps/exam-node-envs/<key>-<run-id>` |
 | 최신 상태 | `/var/lib/exam-deploy/status.json` |
 | 실행 이력 | `/var/lib/exam-deploy/history/<run-id>.json` |
 | 강제 종료 복구 정보 | `/var/lib/exam-deploy/pending.json` |
@@ -72,12 +72,12 @@ sudo bash /path/to/deploy/ubuntu/install.sh
 
 목표는 의존성 파일이 같은 일반 코드 수정에서 pip/npm 설치와 전체 검사를 반복하지 않는 것이다. 변경 범위는 배포 도구/설치기/테스트/이 문서이며, 앱 API·DB 스키마·프로젝트 의존성은 바꾸지 않는다.
 
-구 서버 실제 쉘은 저장소에 없고 현재 SSH 키도 제거돼 원문/소요 시간 비교는 미확인이다. 확인 가능한 `centos7-nginx-deployment.md`의 프론트 절차는 `npm ci → npm run build → rsync`다. 다음 비교는 해당 문서와 Ubuntu controller를 기준으로 하며 구 쉘 내부를 추정하지 않는다.
+사용자가 제공한 구 서버 실제 쉘은 운영 체크아웃에서 `git pull --ff-only`, `pip install .`, 기존 `node_modules`를 이용한 `npm run build`, 웹 루트 복사, backend 재시작과 HTTP 확인 순서다. 자동 rollback·DB revision 검사·의존성 변경 시 `npm ci`는 없다. 아래 경량 배포는 그 속도 특성을 따르되 별도 릴리스 전환과 필수 안전장치를 유지한다.
 
 | 작업 | 처음 만든 Ubuntu 배포 | 경량 배포 |
 |---|---|---|
 | Python 설치 | 매 배포 새 venv + 개발 도구까지 설치 | pyproject/Python 변경 시만 운영 의존성 설치 |
-| Node 설치 | 매 배포 npm ci | manifest/lock/실행환경 변경 시만 설치, 나머지는 복사 |
+| Node 설치 | 매 배포 npm ci | manifest/lock/실행환경 변경 시만 설치, 나머지는 읽기 전용 연결(복사 없음) |
 | lint·mypy·전체 테스트 | 서버에서 매번 실행 | 기존 GitHub CI에서 실행, 서버에서는 제외 |
 | 프론트 build / 백엔드 import 확인 | 빌드 + 전체 검사 | 운영 산출물 빌드 + 간단한 로딩 확인 |
 | DB 버전·헬스체크·롤백 | 수행 | 유지 |
@@ -89,7 +89,7 @@ sudo bash /path/to/deploy/ubuntu/install.sh
 - Python 키는 `pyproject.toml` 전체와 Python 버전/플랫폼을 포함한다. 가상환경은 고정된 최종 경로에서 만들고 이동하지 않는다. 운영 의존성만 설치하며 앱은 작업 경로의 소스를 `python -m app.run`으로 실행한다. 현재 `requires-python >=3.12` 형태를 검증하고, 동적 의존성·배포 패키지 entry point·직접 URL/로컬 의존성 등 지원하지 않는 계약은 자동 진행하지 않는다.
 - Python 설치에는 `-I`를 사용하고, 설치 완료 후 root 소유로 고정한 뒤 앱 코드를 실행한다. 재사용 환경에 쓰기 권한을 주지 않는다. 후보 `.venv`가 선택한 환경을 가리키는지도 재검증한다.
 - Node 키는 package.json/package-lock/.npmrc와 Node/npm/플랫폼을 포함한다. workspace, 설치 훅, overrides, shrinkwrap, 로컬/link 의존성, 지원하지 않는 lock 형식에는 재사용을 적용하지 않는다.
-- Node는 설치 직후 **앱 빌드 전** 원본 스냅샷을 root 소유로 보존한다. 다음 릴리스는 원본을 복사해 빌드하며, hardlink나 공유 쓰기 디렉터리는 사용하지 않는다. 빌드 후 변경된 node_modules는 재사용하지 않는다.
+- Node는 설치 직후 **앱 빌드 전** `/opt/apps/exam-node-envs`에 이동해 root 소유 읽기 전용으로 고정한다. 다음 릴리스는 이를 읽기 전용으로 연결하므로 복사하지 않는다. Vite는 캐시 내부에 임시 설정을 쓰지 않는 runner 설정으로 빌드하며, 연결 대상 변경을 빌드 후 재검증한다.
 - 앱 빌드의 HOME은 후보의 임시 `.build-home`이며 영구 빌드 홈을 수정할 수 없다. 빌드 후 임시 HOME/node_modules는 삭제한다. 원본 스냅샷은 릴리스 보관/정리 정책을 따른다.
 - Python 환경은 보관 중인 모든 릴리스가 더 이상 참조하지 않을 때만 정리한다. 새 환경 설치 실패 시 해당 미완성 환경만 정리하며 기존 환경은 유지한다. 강제 종료로 남은 식별 불가능한 환경은 자동 삭제하지 않는다.
 
@@ -99,7 +99,7 @@ sudo bash /path/to/deploy/ubuntu/install.sh
 
 사용자 요청에 따라 월 1회만 예약하며 배포에서는 백업을 호출하지 않는다. 설치기가 `exam-db-backup.timer.d/30-monthly.conf`를 설치해 기존 일일 `OnCalendar`를 비운 뒤 매월 1일 03:20 Asia/Seoul로 대체한다. 기존 15분 분산과 Persistent(놓친 예약은 다음 가동 시 보완)는 유지한다. 백업 service 자체의 부팅 자동 실행은 해제하고 timer만 활성화한다.
 
-기존 백업 파일과 보관/삭제 스크립트는 변경하지 않는다. 월간 백업은 사고 시 마지막 백업 이후 최대 약 한 달의 변경분을 복구하지 못할 수 있다. 코드 롤백은 DB 데이터를 복구하지 않는다. 설치 후 `systemctl list-timers exam-db-backup.timer --no-pager`로 다음 실행 시각을 확인한다.
+새 gzip 백업과 체크섬 생성·검증이 모두 성공한 뒤 유효한 최신 3세트만 보존한다. 실패했거나 형식이 다른 파일은 자동 삭제하지 않는다. 설치 시 기존 유효 백업도 같은 기준으로 한 번 정리한다. 월간 백업은 사고 시 마지막 백업 이후 최대 약 한 달의 변경분을 복구하지 못할 수 있다. 코드 롤백은 DB 데이터를 복구하지 않는다. 설치 후 `systemctl list-timers exam-db-backup.timer --no-pager`로 다음 실행 시각을 확인한다.
 
 ## 상태 및 오류
 
@@ -115,7 +115,7 @@ sudo journalctl -u exam-deploy.service -n 100 --no-pager
 sudo systemctl start --no-block exam-deploy.service
 ```
 
-`status.json`은 `schema_version=1`, `run_id`, `status`, `phase`, `target_commit`, `previous_release`, `candidate_release`, 시작/갱신 시각을 포함한다. 상태는 `running`, `noop`, `succeeded`, `blocked`, `failed`, `rolled_back`, `rollback_failed`이다. 종료 코드: 0=성공/noop, 1=실패(롤백 성공도 배포 자체는 실패), 2=롤백 검증 실패, 20=DB 검토 필요, 21=미반영 서버 변경, 22=중단된 전환 수동 복구 필요, 75=중복 실행, 130=인터럽트.
+`status.json`은 `schema_version=1`, `run_id`, `status`, `phase`, `target_commit`, `previous_release`, `candidate_release`, `elapsed_seconds`, 시작/갱신 시각을 포함한다. 종료 시 성공·실패·no-op 모두 총 소요 시간을 분/초와 전체 초로 출력한다. 상태는 `running`, `noop`, `succeeded`, `blocked`, `failed`, `rolled_back`, `rollback_failed`이다. 종료 코드: 0=성공/noop, 1=실패(롤백 성공도 배포 자체는 실패), 2=롤백 검증 실패, 20=DB 검토 필요, 21=미반영 서버 변경, 22=중단된 전환 수동 복구 필요, 75=중복 실행, 130=인터럽트.
 
 정전/SIGKILL은 프로그램이 포착할 수 없다. 전환 전 `pending.json`을 기록하며, 남아 있으면 다음 배포를 차단한다. 관리자는 해당 파일의 이전 두 경로와 현재 링크/서비스를 확인한 후 이전 링크로 복원하고 backend 재시작/HTTPS 검증을 수행한다. 정상 복구 확인 전 pending 파일이나 릴리스는 삭제하지 않는다.
 
@@ -132,7 +132,14 @@ sudo systemctl start --no-block exam-deploy.service
 
 격리 테스트: `python -m unittest discover -s deploy/ubuntu/tests -v` (Linux, 운영 서비스/DB 호출 없음).
 
-구현 검증: Ubuntu에서 격리 테스트 29개, Bash/POSIX 셸 문법, Python 핵심 lint 통과. Windows에서는 symlink 권한 제한으로 트랜잭션 테스트를 실행할 수 없어 Linux에서 검증했다. 이 결과는 실제 운영 배포 성공을 의미하지 않으며, 설치 후 최초 실행/헬스체크가 별도로 필요하다.
+구현 검증: Ubuntu에서 격리 테스트 31개와 Bash 셸 문법을 통과했다. Windows에서는 symlink 권한 제한으로 트랜잭션 테스트를 실행할 수 없어 Linux에서 검증했다. 이 결과는 실제 운영 배포 성공을 의미하지 않으며, 설치 후 최초 실행/헬스체크가 별도로 필요하다.
+
+### 2026-08-29 최종 경량화 및 백업 보관
+
+- 변경 없는 Node 의존성은 복사 없이 root 소유 읽기 전용 캐시에 연결한다. 실제 앱 격리 빌드에서 최초 160.66초, 동일 입력 재실행 54.79초였고 두 번째 실행에 pip·npm ci·Node 복사가 없음을 확인했다.
+- 배포 성공·실패·no-op 종료 시 총 소요 시간을 출력하고 상태 JSON에도 경과 초를 기록한다.
+- DB 백업은 월 1회를 유지하며 새 백업과 체크섬이 모두 정상인 경우에만 유효한 최신 3세트를 보관한다. 불완전 파일과 형식이 다른 파일은 보존한다.
+- PASS: Linux 격리 테스트 31개, 설치/백업 셸 문법, 실제 cold/warm 운영 산출물 빌드. NOT_RUN: root 설치 및 운영 서비스 전환은 사용자 sudo 실행 전이다.
 
 ### 2026-08-27 월간 백업 요청
 

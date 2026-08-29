@@ -4,6 +4,7 @@ from contextlib import redirect_stdout
 import io
 import json
 from pathlib import Path
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -78,7 +79,8 @@ class TransactionTests(unittest.TestCase):
         root = Path(self.temp.name)
         self.c = deploy.Config(source=root / 'source', releases=root / 'releases',
                                current=root / 'current', web=root / 'web', state=root / 'state',
-                               environments=root / 'environments', build_home=root / 'build-home')
+                               environments=root / 'environments',
+                               node_environments=root / 'node-environments', build_home=root / 'build-home')
         self.c.source.mkdir()
         (self.c.source / '.env').write_text('DO_NOT_DELETE')
         old_web = root / 'old-web'
@@ -86,6 +88,7 @@ class TransactionTests(unittest.TestCase):
         (old_web / 'index.html').write_text('old')
         self.c.releases.mkdir()
         self.c.environments.mkdir()
+        self.c.node_environments.mkdir()
         self.c.current.symlink_to(self.c.source, target_is_directory=True)
         self.c.web.symlink_to(old_web, target_is_directory=True)
         self.old_web = old_web
@@ -162,6 +165,16 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(job.execute(), 0)
         self.assertEqual(self.state()['status'], 'noop')
         self.assertEqual(job.calls, [])
+
+    def test_total_elapsed_time_is_printed_on_success_and_failure(self):
+        for failure in ('', 'build'):
+            with self.subTest(failure=failure):
+                job = FakeDeployment(self.c, failure)
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    job.started_clock = deploy.time.monotonic() - 65
+                    job.execute()
+                self.assertIn('총 배포 소요 시간: 1분 5.', output.getvalue())
 
     def test_deployment_never_starts_a_backup(self):
         job = FakeDeployment(self.c, 'backup')
@@ -357,13 +370,17 @@ class TransactionTests(unittest.TestCase):
             (destination / 'backend/alembic/versions').mkdir(parents=True)
             (destination / 'frontend/dist').mkdir(parents=True)
             (destination / 'frontend/dist/index.html').write_text('built')
-            (destination / 'frontend/node_modules').mkdir()
         def python_ready(backend, uid, gid):
             order.append('python-ready')
             (backend / '.venv').symlink_to(job.environment, target_is_directory=True)
             return str(backend / '.venv/bin/python')
         def frontend_ready(frontend):
             order.append('frontend-ready')
+            job.node_environment = self.c.node_environments / 'node'
+            (job.node_environment / 'node_modules').mkdir(parents=True)
+            (frontend / 'node_modules').symlink_to(job.node_environment / 'node_modules', target_is_directory=True)
+            (frontend.parent / '.node-dependencies').symlink_to(
+                job.node_environment / 'node_modules', target_is_directory=True)
             return 'key'
         def run(label, cwd, args, *, capture=False):
             order.append('heads' if capture else 'app-import')
@@ -379,7 +396,7 @@ class TransactionTests(unittest.TestCase):
         self.assertFalse((job.candidate / '.build-home').exists())
         self.assertFalse((job.candidate / 'frontend/node_modules').exists())
 
-    def test_frontend_reuse_is_copy_not_install_or_shared_write(self):
+    def test_frontend_reuse_is_read_only_link_without_install_or_copy(self):
         job = FakeDeployment(self.c)
         job.previous = self.c.releases / 'previous'
         old = job.previous / '.node-dependencies'
@@ -397,15 +414,20 @@ class TransactionTests(unittest.TestCase):
             if args[0] == 'cp':
                 subprocess.run(args, check=True)
             return ''
-        with patch.object(deploy.os, 'chown'), patch.object(job, 'freeze_release'), \
+        cached = self.c.node_environments / 'same-cached'
+        shutil.copytree(old, cached / 'node_modules', symlinks=True)
+        (cached / '.exam-node-env.json').write_text('{"key":"same"}')
+        with patch.object(job, 'node_environment_ready', return_value=True), \
+                patch.object(deploy.os, 'chown'), \
                 patch.object(job, 'frontend_dependency_key', return_value='same'), \
                 patch.object(job, 'logged_build_step', side_effect=build):
             self.assertEqual(job.prepare_frontend(frontend), 'same')
-        self.assertEqual([args[0] for args in calls], ['cp', 'npm'])
-        self.assertEqual(calls[-1], ['npm', 'run', 'build'])
-        (frontend / 'node_modules/package/tool').write_text('candidate')
+        self.assertEqual([args[0] for args in calls], ['npm'])
+        self.assertEqual(calls[-1], ['npm', 'run', 'build', '--', '--configLoader', 'runner'])
+        self.assertTrue((frontend / 'node_modules').is_symlink())
+        self.assertEqual((frontend / 'node_modules').resolve(), cached / 'node_modules')
+        self.assertEqual((frontend.parent / '.node-dependencies').resolve(), cached / 'node_modules')
         self.assertEqual((old / 'package/tool').read_text(), 'original')
-        self.assertEqual((frontend.parent / '.node-dependencies/package/tool').read_text(), 'original')
         self.assertTrue((frontend / 'node_modules/.bin/tool').is_symlink())
 
     def test_frontend_invalid_cache_falls_back_to_install(self):
@@ -418,10 +440,19 @@ class TransactionTests(unittest.TestCase):
         (job.previous / '.exam-release.json').write_text(json.dumps({'frontend_dependencies_key': 'same'}))
         frontend = self.c.source / 'frontend'
         frontend.mkdir()
+        calls = []
+        def install(label, cwd, args, **kwargs):
+            calls.append(args)
+            if args[:2] == ['npm', 'ci']:
+                (frontend / 'node_modules').mkdir()
+                (frontend / 'node_modules/.package-lock.json').write_text('{}')
+            return ''
         with patch.object(job, 'frontend_dependency_key', return_value='same'), \
-                patch.object(job, 'logged_build_step') as build:
+                patch.object(job, 'reusable_node_modules', return_value=True), \
+                patch.object(job, 'freeze_release'), patch.object(deploy.os, 'chown'), \
+                patch.object(job, 'logged_build_step', side_effect=install):
             job.prepare_frontend(frontend)
-        self.assertEqual(build.call_args_list[0].args[2][:2], ['npm', 'ci'])
+        self.assertEqual(calls[0][:2], ['npm', 'ci'])
 
     def test_source_dependent_frontend_install_is_not_reused(self):
         frontend = self.c.source / 'frontend'
@@ -496,6 +527,42 @@ class ProgressTests(unittest.TestCase):
         self.assertIn('systemctl disable exam-db-backup.service', installer)
         self.assertIn('systemctl restart exam-db-backup.timer', installer)
         self.assertNotIn('systemctl start exam-db-backup.service', installer)
+        self.assertIn('/usr/local/sbin/exam-db-backup --prune-only', installer)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Bash/find backup retention contract')
+    def test_backup_retention_keeps_latest_three_complete_sets(self):
+        bundle = MODULE.parent
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = (bundle / 'exam-db-backup').read_text(encoding='utf-8')
+            script = script.replace('/var/backups/apps/exam/mysql', str(root))
+            command = root / 'backup'
+            command.write_text(script, encoding='utf-8')
+            command.chmod(0o755)
+            for day in range(1, 6):
+                archive = root / f'cert_exam-2026080{day}T000000Z.sql.gz'
+                archive.write_text(str(day))
+                digest = deploy.hashlib.sha256(archive.read_bytes()).hexdigest()
+                (root / f'{archive.name}.sha256').write_text(f'{digest}  {archive}\n')
+            incomplete = root / 'cert_exam-20260809T000000Z.sql.gz'
+            incomplete.write_text('no checksum')
+            (root / 'cert_exam-20260810T000000Z.sql.gz.sha256').write_text('orphan checksum')
+            unrelated = root / 'operator-file.txt'
+            unrelated.write_text('keep')
+            subprocess.run([str(command), '--prune-only'], check=True)
+            self.assertEqual(sorted(p.name for p in root.glob('*.sql.gz')), [
+                'cert_exam-20260803T000000Z.sql.gz',
+                'cert_exam-20260804T000000Z.sql.gz',
+                'cert_exam-20260805T000000Z.sql.gz',
+                'cert_exam-20260809T000000Z.sql.gz'])
+            self.assertEqual(sorted(p.name for p in root.glob('*.sha256')), [
+                'cert_exam-20260803T000000Z.sql.gz.sha256',
+                'cert_exam-20260804T000000Z.sql.gz.sha256',
+                'cert_exam-20260805T000000Z.sql.gz.sha256',
+                'cert_exam-20260810T000000Z.sql.gz.sha256'])
+            self.assertTrue(incomplete.exists())
+            self.assertTrue((root / 'cert_exam-20260810T000000Z.sql.gz.sha256').exists())
+            self.assertTrue(unrelated.exists())
 
     def test_build_progress_keeps_captured_output_and_state_contract(self):
         with tempfile.TemporaryDirectory() as directory:
