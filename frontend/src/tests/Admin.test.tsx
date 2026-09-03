@@ -128,20 +128,23 @@ describe('Admin mobile layout', () => {
     vi.spyOn(endpoints,'notices').mockResolvedValue([]);
     const create=vi.spyOn(endpoints,'createNotice').mockImplementation(async body=>({id:1,updated_at:new Date().toISOString(),...body}));
     renderAdmin(AdminNotices);
-    await screen.findByText('등록된 공지가 없습니다.');
+    await screen.findByText('공지 목록이 비어 있습니다.');
     expect(screen.getByRole('heading',{name:'기본 정보'})).toBeInTheDocument();
     expect(screen.getByRole('heading',{name:'노출 일정'})).toBeInTheDocument();
     expect(screen.getByRole('heading',{name:'스타일 및 게시'})).toBeInTheDocument();
-    expect(screen.getByRole('heading',{name:'공지 미리보기'})).toBeInTheDocument();
+    expect(screen.queryByRole('heading',{name:'공지 미리보기'})).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'미리보기'})).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText('공지 유형'),'maintenance');
     expect(screen.getByLabelText('점검 화면 표출')).not.toBeChecked();
     expect(screen.queryByLabelText('점검 화면 시작')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('점검 화면 종료')).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('제목'),'점검 안내');
     await userEvent.type(screen.getByLabelText('내용'),'점검 예정 안내입니다.');
-    expect(screen.getByLabelText('공지 미리보기')).toHaveTextContent('점검 안내');
-    await userEvent.type(screen.getByLabelText('팝업 시작'),'2026-08-25T09:00');
-    await userEvent.type(screen.getByLabelText('팝업 종료'),'2026-08-30T02:00');
+    await userEvent.click(screen.getByRole('button',{name:'미리보기'}));
+    expect(screen.getByRole('dialog',{name:'공지 미리보기'})).toHaveTextContent('점검 안내');
+    await userEvent.click(screen.getByRole('button',{name:'미리보기 닫기'}));
+    await userEvent.type(screen.getByLabelText('시작 일시'),'2026-08-25T09:00');
+    await userEvent.type(screen.getByLabelText('종료 일시'),'2026-08-30T02:00');
     await userEvent.click(screen.getByRole('button',{name:'공지 등록'}));
     await waitFor(()=>expect(create).toHaveBeenCalledWith(expect.objectContaining({notice_type:'maintenance',maintenance_screen_enabled:false,maintenance_start_at:null,maintenance_end_at:null,title:'점검 안내'})));
   },15_000);
@@ -151,19 +154,38 @@ describe('Admin mobile layout', () => {
     vi.spyOn(endpoints,'notices').mockResolvedValue([]);
     const create=vi.spyOn(endpoints,'createNotice').mockImplementation(async body=>({id:1,updated_at:new Date().toISOString(),...body}));
     renderAdmin(AdminNotices);
-    await screen.findByText('등록된 공지가 없습니다.');
+    await screen.findByText('공지 목록이 비어 있습니다.');
     await userEvent.selectOptions(screen.getByLabelText('공지 유형'),'maintenance');
     await userEvent.click(screen.getByLabelText('점검 화면 표출'));
     await userEvent.type(screen.getByLabelText('제목'),'정기 점검');
     await userEvent.type(screen.getByLabelText('내용'),'서비스 점검을 진행합니다.');
-    await userEvent.type(screen.getByLabelText('팝업 시작'),'2026-08-25T09:00');
-    await userEvent.type(screen.getByLabelText('팝업 종료'),'2026-08-30T02:00');
+    await userEvent.type(screen.getByLabelText('시작 일시'),'2026-08-25T09:00');
+    await userEvent.type(screen.getByLabelText('종료 일시'),'2026-08-30T02:00');
     await userEvent.type(screen.getByLabelText('점검 화면 시작'),'2026-08-30T02:00');
     await userEvent.type(screen.getByLabelText('점검 화면 종료'),'2026-08-30T04:00');
     await userEvent.click(screen.getByLabelText('게시'));
     await userEvent.click(screen.getByRole('button',{name:'공지 등록'}));
     await waitFor(()=>expect(create).toHaveBeenCalledWith(expect.objectContaining({notice_type:'maintenance',maintenance_screen_enabled:true,is_published:true,title:'정기 점검'})));
   },15_000);
+
+  it('visually separates active, scheduled, ended, and private notices in the notice list',async()=>{
+    mockAdminData();
+    const now=Date.now();
+    const date=(offset:number)=>new Date(now+offset).toISOString();
+    const base={notice_type:'general' as const,maintenance_start_at:null,maintenance_end_at:null,maintenance_screen_enabled:false,title_color:'default' as const,content_color:'default' as const,title_weight:'bold' as const,content_weight:'normal' as const,revision:1};
+    vi.spyOn(endpoints,'notices').mockResolvedValue([
+      {id:1,...base,title:'현재 공지',content:'현재 노출',is_published:true,display_start_at:date(-60_000),display_end_at:date(60_000),updated_at:date(0)},
+      {id:2,...base,title:'예약 공지',content:'예약',is_published:true,display_start_at:date(60_000),display_end_at:date(120_000),updated_at:date(0)},
+      {id:3,...base,title:'종료 공지',content:'종료',is_published:true,display_start_at:date(-120_000),display_end_at:date(-60_000),updated_at:date(0)},
+      {id:4,...base,title:'비공개 공지',content:'비공개',is_published:false,display_start_at:date(-60_000),display_end_at:date(60_000),updated_at:date(0)},
+    ]);
+    renderAdmin(AdminNotices);
+    expect(await screen.findByText('현재 노출 중')).toBeInTheDocument();
+    expect(screen.getByText('노출 예정')).toBeInTheDocument();
+    expect(screen.getByText('노출 종료')).toBeInTheDocument();
+    expect(screen.getByText('비공개')).toBeInTheDocument();
+    expect(screen.getByText('현재 공지').closest('article')).toHaveClass('notice-admin-active');
+  });
 
   it('does not reset without confirmation and alerts when reset fails', async () => {
     mockAdminData();

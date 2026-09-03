@@ -61,8 +61,9 @@ function NoticeManagement(){
   const client=useQueryClient();
   const [form,setForm]=useState<NoticeWrite>(initialNotice);
   const [editingId,setEditingId]=useState<number|null>(null);
+  const [previewOpen,setPreviewOpen]=useState(false);
   const notices=useQuery({queryKey:['admin-notices'],queryFn:endpoints.notices});
-  const resetForm=()=>{setForm(initialNotice);setEditingId(null)};
+  const resetForm=()=>{setForm(initialNotice);setEditingId(null);setPreviewOpen(false)};
   const save=useMutation({mutationFn:(payload:NoticeWrite)=>editingId===null?endpoints.createNotice(payload):endpoints.updateNotice(editingId,payload),onSuccess:()=>{resetForm();return client.invalidateQueries({queryKey:['admin-notices']})}});
   const remove=useMutation({mutationFn:(id:number)=>endpoints.deleteNotice(id),onSuccess:()=>client.invalidateQueries({queryKey:['admin-notices']})});
   const update=<K extends keyof NoticeWrite>(key:K,value:NoticeWrite[K])=>setForm(current=>({...current,[key]:value}));
@@ -71,19 +72,27 @@ function NoticeManagement(){
   const edit=(notice:Notice)=>{setEditingId(notice.id);setForm({...notice,display_start_at:toInput(notice.display_start_at)!,display_end_at:toInput(notice.display_end_at)!,maintenance_start_at:toInput(notice.maintenance_start_at),maintenance_end_at:toInput(notice.maintenance_end_at)});window.scrollTo({top:0,behavior:'smooth'})};
   const submit=(event:FormEvent)=>{event.preventDefault();save.mutate({...form,display_start_at:localIso(form.display_start_at),display_end_at:localIso(form.display_end_at),maintenance_start_at:form.maintenance_start_at?localIso(form.maintenance_start_at):null,maintenance_end_at:form.maintenance_end_at?localIso(form.maintenance_end_at):null})};
   const changeNoticeType=(value:string)=>{const maintenance=value==='maintenance';setForm(current=>({...current,notice_type:maintenance?'maintenance':'general',maintenance_screen_enabled:maintenance?current.maintenance_screen_enabled:false,maintenance_start_at:maintenance?current.maintenance_start_at:null,maintenance_end_at:maintenance?current.maintenance_end_at:null}))};
+  const activity=(notice:Notice)=>{
+    const now=Date.now();const start=new Date(notice.display_start_at).getTime();const end=new Date(notice.display_end_at).getTime();
+    if(!notice.is_published)return {label:'비공개',tone:'neutral',state:'private'};
+    if(now<start)return {label:'노출 예정',tone:'scheduled',state:'scheduled'};
+    if(now>end)return {label:'노출 종료',tone:'ended',state:'ended'};
+    return {label:'현재 노출 중',tone:'active',state:'active'};
+  };
   return <>
     <section className="panel notice-editor">
-      <div className="section-title"><div><h2>{editingId===null?'공지 등록':'공지 수정'}</h2><p className="muted">노출 일정과 사용자에게 보일 모습을 한 화면에서 확인합니다.</p></div>{editingId!==null&&<button onClick={resetForm}>수정 취소</button>}</div>
-      <div className="notice-editor-layout">
+      <div className="section-title"><div><h2>{editingId===null?'공지 등록':'공지 수정'}</h2><p className="muted">노출 일정과 게시 상태를 설정하세요.</p></div>{editingId!==null&&<button onClick={resetForm}>수정 취소</button>}</div>
         <form className="notice-form" onSubmit={submit}>
           <section className="notice-form-section"><h3>기본 정보</h3><div className="notice-form-grid">
             <label>공지 유형<select value={form.notice_type} onChange={event=>changeNoticeType(event.target.value)}><option value="general">일반 공지</option><option value="maintenance">점검 공지</option></select></label>
             <label>제목<input value={form.title} onChange={event=>update('title',event.target.value)} required maxLength={255} placeholder="공지 제목을 입력하세요"/></label>
             <label className="notice-content-field">내용<textarea value={form.content} onChange={event=>update('content',event.target.value)} required rows={6} placeholder="사용자에게 전달할 내용을 입력하세요"/></label>
           </div></section>
-          <section className="notice-form-section"><h3>노출 일정</h3><div className="notice-form-grid">
-            <label>팝업 시작<input type="datetime-local" value={form.display_start_at} onChange={event=>update('display_start_at',event.target.value)} required/></label>
-            <label>팝업 종료<input type="datetime-local" value={form.display_end_at} onChange={event=>update('display_end_at',event.target.value)} required/></label>
+          <section className="notice-form-section"><h3>노출 일정</h3><div className="notice-schedule-range" role="group" aria-label="노출 일정">
+            <label>시작 일시<input type="datetime-local" value={form.display_start_at} onChange={event=>update('display_start_at',event.target.value)} required/></label>
+            <span className="notice-schedule-separator" aria-hidden="true">~</span>
+            <label>종료 일시<input type="datetime-local" value={form.display_end_at} onChange={event=>update('display_end_at',event.target.value)} required/></label>
+          </div><div className="notice-form-grid">
             {form.notice_type==='maintenance'&&<><label className="notice-publish"><input aria-label="점검 화면 표출" type="checkbox" checked={form.maintenance_screen_enabled} onChange={event=>update('maintenance_screen_enabled',event.target.checked)}/>점검 화면 표출 · 일반 사용자 접근 차단</label>{form.maintenance_screen_enabled&&<><label>점검 화면 시작<input type="datetime-local" value={form.maintenance_start_at??''} onChange={event=>update('maintenance_start_at',event.target.value)} required/></label><label>점검 화면 종료<input type="datetime-local" value={form.maintenance_end_at??''} onChange={event=>update('maintenance_end_at',event.target.value)} required/></label></>}</>}
           </div></section>
           <section className="notice-form-section"><h3>스타일 및 게시</h3><div className="notice-form-grid notice-style-grid">
@@ -94,11 +103,10 @@ function NoticeManagement(){
             <label className="notice-publish"><input aria-label="게시" type="checkbox" checked={form.is_published} onChange={event=>update('is_published',event.target.checked)}/>저장 후 게시 상태로 전환</label>
           </div></section>
           {save.isError&&<p className="form-error" role="alert">{save.error.message}</p>}
-          <button className="button notice-save" disabled={save.isPending}>{save.isPending?'저장 중…':editingId===null?'공지 등록':'공지 수정'}</button>
+          <div className="notice-form-actions"><button type="button" className="secondary-button" onClick={()=>setPreviewOpen(true)}>미리보기</button><button className="button notice-save" disabled={save.isPending}>{save.isPending?'저장 중…':editingId===null?'공지 등록':'공지 수정'}</button></div>
         </form>
-        <aside className="notice-preview-pane"><h3>공지 미리보기</h3><article className="notice-preview" aria-label="공지 미리보기"><span className={`badge ${form.notice_type==='maintenance'?'danger':'success'}`}>{form.notice_type==='maintenance'?'점검 공지':'일반 공지'}</span><h2 className={`notice-color-${form.title_color} notice-weight-${form.title_weight}`}>{form.title||'공지 제목이 표시됩니다'}</h2><p className={`notice-color-${form.content_color} notice-weight-${form.content_weight}`}>{form.content||'공지 내용을 입력하면 이곳에서 미리 확인할 수 있습니다.'}</p>{form.display_start_at&&form.display_end_at&&<small>{form.display_start_at.replace('T',' ')} ~ {form.display_end_at.replace('T',' ')}</small>}</article></aside>
-      </div>
     </section>
-    <section className="panel"><div className="section-title"><div><h2>등록된 공지</h2><p className="muted">예약된 공지와 게시 상태를 관리합니다.</p></div><span>{notices.data?.length??0}건</span></div>{notices.isLoading?<Loading/>:notices.isError?<ErrorState error={notices.error}/>:notices.data!.length===0?<p className="muted">등록된 공지가 없습니다.</p>:<div className="notice-admin-list">{notices.data!.map(notice=><article key={notice.id}><div className="notice-admin-summary"><div className="notice-badges"><span className={`badge ${notice.notice_type==='maintenance'?'danger':'success'}`}>{notice.notice_type==='maintenance'?'점검':'일반'}</span><span className={`badge ${notice.is_published?'success':''}`}>{notice.is_published?'게시 중':'비공개'}</span></div><h3>{notice.title}</h3><p><b>노출</b> {new Date(notice.display_start_at).toLocaleString('ko-KR')} ~ {new Date(notice.display_end_at).toLocaleString('ko-KR')}</p>{notice.maintenance_screen_enabled&&notice.maintenance_start_at&&notice.maintenance_end_at&&<p><b>점검</b> {new Date(notice.maintenance_start_at).toLocaleString('ko-KR')} ~ {new Date(notice.maintenance_end_at).toLocaleString('ko-KR')}</p>}</div><div className="actions"><button disabled={save.isPending} onClick={()=>edit(notice)}>수정</button><button className="danger-button" disabled={remove.isPending} onClick={()=>window.confirm('공지를 삭제하시겠습니까?')&&remove.mutate(notice.id)}>삭제</button></div></article>)}</div>}</section>
+    {previewOpen&&<div className="modal-backdrop"><section className="modal notice-preview-modal" role="dialog" aria-modal="true" aria-labelledby="notice-preview-title"><p className="eyebrow">저장 전 미리보기</p><h2 id="notice-preview-title">공지 미리보기</h2><article className="notice-preview"><span className={`badge ${form.notice_type==='maintenance'?'danger':'success'}`}>{form.notice_type==='maintenance'?'점검 공지':'일반 공지'}</span><h3 className={`notice-color-${form.title_color} notice-weight-${form.title_weight}`}>{form.title||'공지 제목이 표시됩니다'}</h3><p className={`notice-color-${form.content_color} notice-weight-${form.content_weight}`}>{form.content||'공지 내용을 입력하면 이곳에서 미리 확인할 수 있습니다.'}</p>{form.display_start_at&&form.display_end_at&&<small>{form.display_start_at.replace('T',' ')} ~ {form.display_end_at.replace('T',' ')}</small>}</article><div className="notice-actions"><button className="button" onClick={()=>setPreviewOpen(false)}>미리보기 닫기</button></div></section></div>}
+    <section className="panel"><div className="section-title"><div><h2>공지 목록</h2><p className="muted">현재 노출, 예정, 종료, 비공개 상태를 구분해 관리합니다.</p></div><span>{notices.data?.length??0}건</span></div>{notices.isLoading?<Loading/>:notices.isError?<ErrorState error={notices.error}/>:notices.data!.length===0?<p className="muted">공지 목록이 비어 있습니다.</p>:<div className="notice-admin-list">{notices.data!.map(notice=>{const status=activity(notice);return <article key={notice.id} className={`notice-admin-${status.state}`}><div className="notice-admin-summary"><div className="notice-badges"><span className={`badge ${notice.notice_type==='maintenance'?'danger':'success'}`}>{notice.notice_type==='maintenance'?'점검':'일반'}</span><span className={`notice-status notice-status-${status.tone}`}>{status.label}</span></div><h3>{notice.title}</h3><p><b>노출</b> {new Date(notice.display_start_at).toLocaleString('ko-KR')} ~ {new Date(notice.display_end_at).toLocaleString('ko-KR')}</p>{notice.maintenance_screen_enabled&&notice.maintenance_start_at&&notice.maintenance_end_at&&<p><b>점검</b> {new Date(notice.maintenance_start_at).toLocaleString('ko-KR')} ~ {new Date(notice.maintenance_end_at).toLocaleString('ko-KR')}</p>}</div><div className="actions"><button disabled={save.isPending} onClick={()=>edit(notice)}>수정</button><button className="danger-button" disabled={remove.isPending} onClick={()=>window.confirm('공지를 삭제하시겠습니까?')&&remove.mutate(notice.id)}>삭제</button></div></article>})}</div>}</section>
   </>;
 }
