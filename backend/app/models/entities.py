@@ -231,6 +231,19 @@ class AIUsageLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AIConceptSummary(Base):
+    __tablename__ = table_name("ai_concept_summaries")
+    __table_args__ = (UniqueConstraint("user_id", "certification_id", name="uq_ai_concept_summary_user_certification"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('users')}.id"), index=True)
+    certification_id: Mapped[int] = mapped_column(ForeignKey(f"{table_name('certifications')}.id"), index=True)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    normal_session_count: Mapped[int] = mapped_column(Integer, default=0)
+    retry_session_count: Mapped[int] = mapped_column(Integer, default=0)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    model_name: Mapped[str | None] = mapped_column(String(128))
+
+
 class ImportJob(Base):
     __tablename__ = table_name("import_jobs")
     id: Mapped[int] = mapped_column(primary_key=True)

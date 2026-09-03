@@ -14,11 +14,15 @@ class AIOutputError(RuntimeError):
 
 class AIAdapter(Protocol):
     def explain(self, payload: dict[str, Any], language: str) -> dict[str, Any]: ...
+    def concept_summary(self, payload: dict[str, Any], language: str) -> dict[str, Any]: ...
 
 
 class DisabledAIAdapter:
     def explain(self, payload: dict[str, Any], language: str) -> dict[str, Any]:
         raise AIUnavailableError("AI explanation is not configured. Set OPENAI_API_KEY and an explanation model.")
+
+    def concept_summary(self, payload: dict[str, Any], language: str) -> dict[str, Any]:
+        raise AIUnavailableError("AI concept summary is not configured. Set OPENAI_API_KEY and an explanation model.")
 
 
 class OpenAIAdapter:
@@ -73,6 +77,52 @@ are not supported by the supplied question and choices. Return every requested f
             for item in result["choice_analysis"]
         }
         return result
+
+    def concept_summary(self, payload: dict[str, Any], language: str) -> dict[str, Any]:
+        from openai import OpenAIError
+        from pydantic import BaseModel
+
+        class Weakness(BaseModel):
+            domain: str
+            diagnosis: str
+            concepts: list[str]
+            actions: list[str]
+
+        class RelatedQuestion(BaseModel):
+            question_id: int
+            question_uid: str
+            concept: str
+            why_review: str
+
+        class Output(BaseModel):
+            overview: str
+            weaknesses: list[Weakness]
+            priority_concepts: list[str]
+            related_questions: list[RelatedQuestion]
+            study_plan: list[str]
+            memory_summary: str
+
+        system_prompt = f"""
+You are a certification-exam learning coach. Write in {language}.
+Analyze only the supplied performance data. Do not invent questions, answers, or facts.
+Identify recurring weak concepts by domain, give specific corrective actions, and select only
+question IDs from related_questions in the supplied samples. Keep the output concise and
+actionable. Return every requested field.
+""".strip()
+        try:
+            response = self.client.responses.parse(
+                model=self.model,
+                input=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                text_format=Output,
+            )
+        except OpenAIError as exc:
+            raise AIUnavailableError("OpenAI API request failed. Check the API key, explanation model, and network.") from exc
+        if response.output_parsed is None:
+            raise AIOutputError("AI returned no structured concept summary")
+        return response.output_parsed.model_dump()
 
 
 def build_ai_adapter(settings: Settings) -> AIAdapter:

@@ -25,4 +25,7 @@ def test_migrations_cover_every_application_table() -> None:
     notice_migration = Path(__file__).parents[1] / "alembic/versions/0010_notices_and_maintenance.py"
     assert '"exam_notices"' in notice_migration.read_text(encoding="utf-8")
     migrated_tables.add("exam_notices")
+    concept_summary_migration = Path(__file__).parents[1] / "alembic/versions/0011_ai_concept_summaries.py"
+    assert '"exam_ai_concept_summaries"' in concept_summary_migration.read_text(encoding="utf-8")
+    migrated_tables.add("exam_ai_concept_summaries")
     assert migrated_tables == set(Base.metadata.tables)

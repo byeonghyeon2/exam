@@ -248,6 +248,24 @@ class WrongNoteOut(BaseModel):
     last_wrong_at: datetime
 
 
+class AIConceptSummaryResultOut(BaseModel):
+    generated_at: datetime
+    normal_session_count: int
+    retry_session_count: int
+    summary: dict[str, Any]
+
+
+class AIConceptSummaryStatusOut(BaseModel):
+    certification_code: str
+    certification_name: str
+    normal_sessions_completed: int
+    normal_sessions_required: int = 5
+    retry_sessions_completed: int
+    retry_sessions_required: int
+    can_generate: bool
+    result: AIConceptSummaryResultOut | None = None
+
+
 class ReportCreate(BaseModel):
     report_type: Literal["wrong_answer", "missing_content", "translation_error", "language_mismatch", "wrong_answer_count", "missing_asset", "wrong_explanation", "duplicate", "other"]
     description: str = Field(min_length=1, max_length=4000)

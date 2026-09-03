@@ -495,7 +495,7 @@ def test_password_session_and_webauthn_service_edge_cases(monkeypatch) -> None:
 
     settings = Settings(
         database_url="sqlite://", database_host="", database_name="",
-        database_user="", database_password="", frontend_origin="https://exam.example.com/",
+        database_user="", database_password="", frontend_origin="https://exam.example.com/", passkey_rp_id="",
     )
     assert passkeys.relying_party_id(settings) == "exam.example.com"
     assert passkeys.expected_origin(settings) == "https://exam.example.com"
