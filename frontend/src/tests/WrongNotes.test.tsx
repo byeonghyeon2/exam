@@ -11,8 +11,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 function mockConceptSummary(overrides: Partial<Awaited<ReturnType<typeof endpoints.conceptSummary>>> = {}) {
   vi.spyOn(endpoints, 'conceptSummary').mockResolvedValue({
     certification_code: 'DEA-C01', certification_name: 'AWS 데이터 엔지니어',
-    normal_sessions_completed: 2, normal_sessions_required: 5,
-    retry_sessions_completed: 1, retry_sessions_required: 5,
+    answer_count: 2, minimum_answer_count: 10,
     can_generate: false, result: null, ...overrides,
   });
 }
@@ -73,17 +72,17 @@ describe('WrongNotes', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: '학습 기록 #1' })).not.toBeInTheDocument());
   });
 
-  it('shows the AI concept-summary activation guide with the current progress', async () => {
+  it('shows the pattern-analysis activation guide with the current progress', async () => {
     mockConceptSummary();
     vi.spyOn(endpoints, 'studyHistory').mockResolvedValue([{
       session_id:'batch-1', certification_code:'DEA-C01', certification_name:'AWS 데이터 엔지니어', completed_at:'2026-08-08T10:00:00Z',
       total_count:10, wrong_count:2, correct_count:8, wrong_questions:[],
     }]);
     render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><WrongNotes /></MemoryRouter></QueryClientProvider>);
-    expect(await screen.findByRole('button', { name: 'AWS 데이터 엔지니어 AI 개념 정리 활성화 안내' })).toBeInTheDocument();
-    expect(screen.getByText('처음 분석: 학습하기 완료 10문제 이상 세션 5회와 오답노트 재학습 5회가 필요합니다.')).toBeInTheDocument();
-    expect(await screen.findByText('현재 진행도: 학습 2/5회 · 오답노트 재학습 1/5회')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'AI 개념 정리' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'AWS 데이터 엔지니어 오답 패턴 분석 안내' })).toBeInTheDocument();
+    expect(screen.getByText('완료한 학습 및 오답노트 재학습 답안이 10문제 이상이면 분석할 수 있습니다.')).toBeInTheDocument();
+    expect(await screen.findByText('완료 답안 2/10문제')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '오답 패턴 분석' })).toBeDisabled();
   });
 
   it('keeps the wrong-note screen usable when the optional AI summary status is unavailable', async () => {
@@ -94,7 +93,7 @@ describe('WrongNotes', () => {
     }]);
     render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><WrongNotes /></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole('heading', { name: '학습 기록 #1' })).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText('AI 개념 정리 정보를 불러오지 못했습니다.')).not.toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: 'AI 개념 정리' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('오답 패턴 분석 정보를 불러오지 못했습니다.')).not.toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: '오답 패턴 분석' })).not.toBeInTheDocument();
   });
 });

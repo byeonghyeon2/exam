@@ -31,6 +31,7 @@ from app.models.entities import (
     MockExamQuestion,
     Question,
     QuestionAnswerVersion,
+    QuestionChoice,
     QuestionExplanation,
     QuestionReport,
     StudyAttempt,
@@ -574,50 +575,32 @@ def concept_summary_status(db: Session, user_id: int, certification: Certificati
         AIConceptSummary.user_id == user_id,
         AIConceptSummary.certification_id == certification.id,
     ))
-    cutoff = saved.generated_at if saved else None
-    normal_query = select(StudySessionRecord).where(
-        StudySessionRecord.user_id == user_id,
-        StudySessionRecord.certification_id == certification.id,
-        StudySessionRecord.status == "completed",
-        StudySessionRecord.retry_of_session_id.is_(None),
-        StudySessionRecord.completed_at.is_not(None),
-    )
-    if cutoff is not None:
-        normal_query = normal_query.where(StudySessionRecord.completed_at > cutoff)
-    normal_records = list(db.scalars(normal_query))
-    normal_count = sum(len(record.question_ids_json) >= 10 for record in normal_records)
-    retry_count = 0 if saved else db.scalar(select(func.count()).select_from(StudySessionRecord).where(
-        StudySessionRecord.user_id == user_id,
-        StudySessionRecord.certification_id == certification.id,
-        StudySessionRecord.status == "completed",
-        StudySessionRecord.retry_of_session_id.is_not(None),
-    ))
-    retry_required = 0 if saved else 5
+    answer_count = db.scalar(select(func.count()).select_from(StudyAttempt)
+        .join(StudySessionRecord, StudySessionRecord.session_id == StudyAttempt.session_id)
+        .where(
+            StudyAttempt.user_id == user_id,
+            StudySessionRecord.certification_id == certification.id,
+            StudySessionRecord.status == "completed",
+        )) or 0
     result = None if saved is None else AIConceptSummaryResultOut(
         generated_at=saved.generated_at,
-        normal_session_count=saved.normal_session_count,
-        retry_session_count=saved.retry_session_count,
         summary=saved.summary_json,
     )
     return AIConceptSummaryStatusOut(
         certification_code=certification.certification_code,
         certification_name=certification.name_ko or certification.name_en,
-        normal_sessions_completed=normal_count,
-        retry_sessions_completed=retry_count,
-        retry_sessions_required=retry_required,
-        can_generate=normal_count >= 5 and retry_count >= retry_required,
+        answer_count=answer_count,
+        can_generate=answer_count >= 10,
         result=result,
     )
 
 
-def concept_summary_payload(db: Session, user_id: int, certification: Certification, since: Any) -> tuple[dict[str, Any], int, int]:
+def concept_summary_payload(db: Session, user_id: int, certification: Certification) -> tuple[dict[str, Any], int]:
     session_query = select(StudySessionRecord).where(
         StudySessionRecord.user_id == user_id,
         StudySessionRecord.certification_id == certification.id,
         StudySessionRecord.status == "completed",
     )
-    if since is not None:
-        session_query = session_query.where(StudySessionRecord.completed_at > since)
     records = list(db.scalars(session_query))
     session_ids = [record.session_id for record in records]
     attempts = [] if not session_ids else list(db.execute(
@@ -627,39 +610,47 @@ def concept_summary_payload(db: Session, user_id: int, certification: Certificat
         .where(StudyAttempt.user_id == user_id, StudyAttempt.session_id.in_(session_ids))
     ))
     domains: dict[str, dict[str, Any]] = {}
-    questions: dict[int, dict[str, Any]] = {}
+    patterns: dict[tuple[int, tuple[str, ...]], dict[str, Any]] = {}
     for attempt, question, domain in attempts:
         domain_name = (domain.name_ko or domain.name_en) if domain else "미분류"
         domain_item = domains.setdefault(domain_name, {"domain": domain_name, "attempts": 0, "wrong": 0})
         domain_item["attempts"] += 1
         domain_item["wrong"] += not attempt.is_correct
         if not attempt.is_correct:
-            item = questions.setdefault(question.id, {
+            pattern_key = (question.id, tuple(sorted(attempt.selected_answers_json)))
+            item = patterns.setdefault(pattern_key, {
                 "question_id": question.id, "question_uid": question.question_uid,
-                "domain": domain_name, "question": question.question_ko or question.question_en,
+                "domain": domain_name,
                 "wrong_count": 0, "selected_answers": [],
             })
             item["wrong_count"] += 1
             item["selected_answers"] = attempt.selected_answers_json
-    sample_ids = [item["question_id"] for item in sorted(questions.values(), key=lambda value: (-value["wrong_count"], value["question_id"]))[:12]]
-    explanations: dict[int, str] = {}
+    sample_ids = [item["question_id"] for item in sorted(patterns.values(), key=lambda value: (-value["wrong_count"], value["question_id"]))[:12]]
+    concepts: dict[int, str] = {}
     if sample_ids:
-        explanations = {item.question_id: item.core_reason for item in db.scalars(select(QuestionExplanation).where(
+        concepts = {item.question_id: item.related_concepts for item in db.scalars(select(QuestionExplanation).where(
             QuestionExplanation.question_id.in_(sample_ids),
             QuestionExplanation.language == "ko",
             QuestionExplanation.generation_status == "complete",
         ))}
-    samples = []
-    for item in sorted(questions.values(), key=lambda value: (-value["wrong_count"], value["question_id"]))[:12]:
-        samples.append({**item, "cached_explanation": explanations.get(item["question_id"], "")})
-    normal_count = sum(record.retry_of_session_id is None and len(record.question_ids_json) >= 10 for record in records)
-    retry_count = sum(record.retry_of_session_id is not None for record in records)
+    choices = {} if not sample_ids else {
+        (item.question_id, item.choice_key): item.text_ko or item.text_en
+        for item in db.scalars(select(QuestionChoice).where(QuestionChoice.question_id.in_(sample_ids)))
+    }
+    wrong_choice_patterns = []
+    for item in sorted(patterns.values(), key=lambda value: (-value["wrong_count"], value["question_id"]))[:12]:
+        wrong_choice_patterns.append({
+            **item,
+            "selected_choice_texts": [choices.get((item["question_id"], key), key) for key in item["selected_answers"]],
+            "related_concepts": concepts.get(item["question_id"], ""),
+        })
     return {
         "certification": certification.name_ko or certification.name_en,
-        "study_scope": "자격증 학습하기 완료 세션과 오답노트 재학습 완료 세션",
+        "answer_count": len(attempts),
+        "study_scope": "완료한 자격증 학습 및 오답노트 재학습 답안",
         "domain_performance": list(domains.values()),
-        "frequently_missed_question_samples": samples,
-    }, normal_count, retry_count
+        "wrong_choice_patterns": wrong_choice_patterns,
+    }, len(attempts)
 
 
 @router.get("/wrong-notes/ai-concept-summary/{certification_code}", response_model=AIConceptSummaryStatusOut)
@@ -679,12 +670,12 @@ def generate_concept_summary(certification_code: str, db: Db, user: CurrentUser,
     user_id = owner_id(user)
     status = concept_summary_status(db, user_id, certification)
     if not status.can_generate:
-        raise HTTPException(409, "Complete the required learning sessions before generating an AI concept summary")
+        raise HTTPException(409, "Answer at least ten completed questions before generating a pattern analysis")
     existing = db.scalar(select(AIConceptSummary).where(
         AIConceptSummary.user_id == user_id,
         AIConceptSummary.certification_id == certification.id,
     ))
-    payload, normal_count, retry_count = concept_summary_payload(db, user_id, certification, existing.generated_at if existing else None)
+    payload, answer_count = concept_summary_payload(db, user_id, certification)
     try:
         summary = build_ai_adapter(settings).concept_summary(payload, "ko")
     except AIUnavailableError as exc:
@@ -693,8 +684,8 @@ def generate_concept_summary(certification_code: str, db: Db, user: CurrentUser,
         raise HTTPException(502, str(exc)) from exc
     item = existing or AIConceptSummary(user_id=user_id, certification_id=certification.id)
     item.summary_json = summary
-    item.normal_session_count = normal_count
-    item.retry_session_count = retry_count
+    item.normal_session_count = answer_count
+    item.retry_session_count = 0
     item.generated_at = utcnow()
     item.model_name = settings.openai_explanation_model or settings.openai_model
     db.add(item)

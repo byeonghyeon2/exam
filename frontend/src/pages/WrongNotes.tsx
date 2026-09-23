@@ -19,26 +19,26 @@ function ConceptSummaryCard({ certificationCode, certificationName }: { certific
   const generate = useMutation({ mutationFn: () => endpoints.generateConceptSummary(certificationCode), onSuccess: result => queryClient.setQueryData(['ai-concept-summary', certificationCode], result) });
   const data = status.data;
   const result = data?.result;
-  const progress = data ? `현재 진행도: 학습 ${data.normal_sessions_completed}/${data.normal_sessions_required}회 · 오답노트 재학습 ${data.retry_sessions_completed}/${data.retry_sessions_required}회` : '활성화 조건을 확인하는 중입니다.';
+  const progress = data ? `완료 답안 ${data.answer_count}/${data.minimum_answer_count}문제` : '분석 가능 여부를 확인하는 중입니다.';
 
   if (status.isError || (!status.isLoading && !data)) return null;
 
-  return <section className="concept-summary-card" aria-label={`${certificationName} AI 개념 정리`}>
+  return <section className="concept-summary-card" aria-label={`${certificationName} 오답 패턴 분석`}>
     <header className="concept-summary-header">
-      <div><span className="section-eyebrow"><Sparkles size={14} /> AI 학습 분석</span><h2>{certificationName} AI 개념 정리</h2><p>자주 틀린 개념과 복습 우선순위를 자격증별로 정리합니다.</p></div>
+      <div><span className="section-eyebrow"><Sparkles size={14} /> AI 학습 분석</span><h2>{certificationName} 오답 패턴 분석</h2><p>자주 고른 오답과 약점 개념을 자격증별로 분석합니다.</p></div>
       <div className="concept-summary-actions">
         <span className="concept-help-wrap">
-          <button className="icon-button concept-help-button" type="button" aria-label={`${certificationName} AI 개념 정리 활성화 안내`} aria-describedby={`concept-help-${certificationCode}`}><CircleHelp size={19} /></button>
-          <span className="concept-help-tooltip" id={`concept-help-${certificationCode}`} role="tooltip"><strong><BookOpenCheck size={16} /> AI 개념 정리 활성화 기준</strong><span>처음 분석: 학습하기 완료 10문제 이상 세션 5회와 오답노트 재학습 5회가 필요합니다.</span><span>다음 분석: 직전 분석 후 학습하기 완료 10문제 이상 세션 5회를 새로 완료하면 됩니다.</span><em>{progress}</em></span>
+          <button className="icon-button concept-help-button" type="button" aria-label={`${certificationName} 오답 패턴 분석 안내`} aria-describedby={`concept-help-${certificationCode}`}><CircleHelp size={19} /></button>
+          <span className="concept-help-tooltip" id={`concept-help-${certificationCode}`} role="tooltip"><strong><BookOpenCheck size={16} /> 오답 패턴 분석 기준</strong><span>완료한 학습 및 오답노트 재학습 답안이 10문제 이상이면 분석할 수 있습니다.</span><span>정답률, 자주 틀리는 단원, 반복 선택한 오답 보기를 바탕으로 복습 우선순위를 안내합니다.</span><em>{progress}</em></span>
         </span>
-        <button className="button" disabled={!data?.can_generate || generate.isPending} onClick={() => generate.mutate()}><Sparkles size={17} />{generate.isPending ? '분석 생성 중…' : result ? '새 분석 생성' : 'AI 개념 정리'}</button>
+        <button className="button" disabled={!data?.can_generate || generate.isPending} onClick={() => generate.mutate()}><Sparkles size={17} />{generate.isPending ? '분석 생성 중…' : result ? '분석 갱신' : '오답 패턴 분석'}</button>
       </div>
     </header>
     {status.isLoading ? <p className="muted">활성화 조건을 확인하고 있습니다.</p> : data ? <>
-      <div className="concept-progress" aria-label="AI 개념 정리 진행도"><span>학습하기 <b>{data.normal_sessions_completed}/{data.normal_sessions_required}</b>회</span>{data.retry_sessions_required > 0 ? <span>오답노트 재학습 <b>{data.retry_sessions_completed}/{data.retry_sessions_required}</b>회</span> : <span>새 분석 조건: 학습하기 5회</span>}</div>
+      <div className="concept-progress" aria-label="오답 패턴 분석 진행도"><span>완료 답안 <b>{data.answer_count}/{data.minimum_answer_count}</b>문제</span><span>{data.can_generate ? '분석 가능' : '답안이 더 필요합니다'}</span></div>
       {result && <div className="concept-result"><p className="concept-overview">{result.summary.overview}</p><div className="concept-weaknesses">{result.summary.weaknesses.map(item => <article key={item.domain}><h3>{item.domain}</h3><p>{item.diagnosis}</p><div className="concept-tags">{item.concepts.map(concept => <span key={concept}>{concept}</span>)}</div><ul>{item.actions.map(action => <li key={action}>{action}</li>)}</ul></article>)}</div><div className="concept-detail-grid"><section><h3>우선 복습 개념</h3><div className="concept-tags">{result.summary.priority_concepts.map(concept => <span key={concept}>{concept}</span>)}</div></section><section><h3>추천 학습 순서</h3><ol>{result.summary.study_plan.map(step => <li key={step}>{step}</li>)}</ol></section></div>{result.summary.related_questions.length > 0 && <details className="wrong-question-details concept-questions"><summary>분석에 반영된 오답 문제 보기 ({result.summary.related_questions.length})</summary><ol>{result.summary.related_questions.map(question => <li key={question.question_id}><b>{question.question_uid}</b> · {question.concept}<small>{question.why_review}</small></li>)}</ol></details>}<p className="concept-memory-summary"><b>기억하기</b> {result.summary.memory_summary}</p></div>}
     </> : null}
-    {generate.isError && <p className="inline-error">AI 개념 정리 생성에 실패했습니다. 잠시 후 다시 시도해주세요.</p>}
+    {generate.isError && <p className="inline-error">오답 패턴 분석 생성에 실패했습니다. 잠시 후 다시 시도해주세요.</p>}
   </section>;
 }
 

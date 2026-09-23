@@ -105,8 +105,10 @@ are not supported by the supplied question and choices. Return every requested f
         system_prompt = f"""
 You are a certification-exam learning coach. Write in {language}.
 Analyze only the supplied performance data. Do not invent questions, answers, or facts.
+Use wrong_choice_patterns to identify which wrong options the learner repeatedly chooses and
+explain the likely confusion in plain language. Use related_concepts only when supplied.
 Identify recurring weak concepts by domain, give specific corrective actions, and select only
-question IDs from related_questions in the supplied samples. Keep the output concise and
+question IDs from related_questions in the supplied patterns. Keep the output concise and
 actionable. Return every requested field.
 """.strip()
         try:

@@ -26,13 +26,13 @@ class FakeConceptSummaryAdapter:
             "overview": "수집 영역의 반복 오답을 먼저 정리하세요.",
             "weaknesses": [{"domain": "수집", "diagnosis": "반복 오답", "concepts": ["S3"], "actions": ["핵심 차이를 복습하세요."]}],
             "priority_concepts": ["S3"],
-            "related_questions": [{"question_id": payload["frequently_missed_question_samples"][0]["question_id"], "question_uid": payload["frequently_missed_question_samples"][0]["question_uid"], "concept": "S3", "why_review": "반복 오답"}],
+            "related_questions": [{"question_id": payload["wrong_choice_patterns"][0]["question_id"], "question_uid": payload["wrong_choice_patterns"][0]["question_uid"], "concept": "S3", "why_review": "반복 오답"}],
             "study_plan": ["S3를 복습하세요."],
             "memory_summary": "요구사항과 서비스를 연결하세요.",
         }
 
 
-def test_concept_summary_requires_initial_learning_and_retry_history_then_refreshes_after_five_new_learning_sessions(monkeypatch: Any) -> None:
+def test_pattern_analysis_requires_ten_completed_answers_and_uses_wrong_choice_patterns(monkeypatch: Any) -> None:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
@@ -67,34 +67,33 @@ def test_concept_summary_requires_initial_learning_and_retry_history_then_refres
     monkeypatch.setattr(router_module, "build_ai_adapter", lambda _settings: adapter)
     try:
         with TestClient(app) as client:
-            assert client.get("/api/v1/wrong-notes/ai-concept-summary/DEA-C01").json()["can_generate"] is False
+            initial = client.get("/api/v1/wrong-notes/ai-concept-summary/DEA-C01").json()
+            assert initial["can_generate"] is False
+            assert initial["answer_count"] == 0
             assert client.post("/api/v1/wrong-notes/ai-concept-summary/DEA-C01").status_code == 409
-            add_completed_sessions(5, retry=False)
-            add_completed_sessions(5, retry=True)
+            add_completed_sessions(1, retry=False)
             ready = client.get("/api/v1/wrong-notes/ai-concept-summary/DEA-C01")
             assert ready.status_code == 200
-            assert ready.json()["normal_sessions_completed"] == 5
-            assert ready.json()["retry_sessions_completed"] == 5
+            assert ready.json()["answer_count"] == 10
+            assert ready.json()["minimum_answer_count"] == 10
             assert ready.json()["can_generate"] is True
             generated = client.post("/api/v1/wrong-notes/ai-concept-summary/DEA-C01")
             assert generated.status_code == 200
             assert generated.json()["result"]["summary"]["overview"] == "수집 영역의 반복 오답을 먼저 정리하세요."
-            assert generated.json()["retry_sessions_required"] == 0
-            assert generated.json()["can_generate"] is False
-            add_completed_sessions(5, retry=False, start=10, future=True)
+            assert generated.json()["can_generate"] is True
             refreshed = client.get("/api/v1/wrong-notes/ai-concept-summary/DEA-C01")
-            assert refreshed.json()["normal_sessions_completed"] == 5
-            assert refreshed.json()["retry_sessions_required"] == 0
-            assert refreshed.json()["can_generate"] is True
+            assert refreshed.json()["answer_count"] == 10
             assert client.post("/api/v1/wrong-notes/ai-concept-summary/DEA-C01").status_code == 200
     finally:
         app.dependency_overrides.clear()
 
     assert len(adapter.calls) == 2
     assert adapter.calls[0][1] == "ko"
-    assert len(adapter.calls[0][0]["frequently_missed_question_samples"]) <= 12
+    assert adapter.calls[0][0]["answer_count"] == 10
+    assert len(adapter.calls[0][0]["wrong_choice_patterns"]) <= 12
+    assert adapter.calls[0][0]["wrong_choice_patterns"][0]["selected_answers"] == ["B"]
     with session_factory() as db:
         summary = db.scalar(select(AIConceptSummary))
         certification = db.scalar(select(Certification))
         assert summary is not None and certification is not None
-        assert concept_summary_status(db, 999, certification).normal_sessions_completed == 0
+        assert concept_summary_status(db, 999, certification).answer_count == 0
