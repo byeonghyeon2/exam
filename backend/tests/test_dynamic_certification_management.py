@@ -54,11 +54,14 @@ def test_problem_management_and_mock_exams_follow_the_selected_certification() -
         db.add_all([dea_domain, snow_storage, snow_security])
         db.flush()
 
-        def add_question(uid: str, certification: Certification, domain: Domain) -> Question:
+        def add_question(
+            uid: str, certification: Certification, domain: Domain,
+            verification_status: str = "verified",
+        ) -> Question:
             question = Question(
                 question_uid=uid, certification_id=certification.id, domain_id=domain.id,
                 question_type="multiple_choice", question_en=uid, question_ko=uid,
-                content_hash=uid.lower(), verification_status="verified",
+                content_hash=uid.lower(), verification_status=verification_status,
                 choices=[QuestionChoice(choice_key="A", text_en="A", sort_order=1)],
                 answer_versions=[QuestionAnswerVersion(
                     answer_source="admin_final", answers_json=["A"], is_current=True,
@@ -76,6 +79,9 @@ def test_problem_management_and_mock_exams_follow_the_selected_certification() -
             add_question(f"SNOW-SECURITY-{index}", snow, snow_security)
             for index in range(2)
         ]
+        excluded_question = add_question(
+            "SNOW-STORAGE-EXCLUDED", snow, snow_storage, "needs_review",
+        )
         db.add_all([
             QuestionReport(question_id=dea_question.id, report_type="other", description="AWS 신고"),
             QuestionReport(question_id=snow_questions[0].id, report_type="other", description="Snow 신고"),
@@ -101,8 +107,8 @@ def test_problem_management_and_mock_exams_follow_the_selected_certification() -
             )
             assert report.status_code == 200
             assert report.json()["domains"] == [
-                {"domain_code": "SNOW-STORAGE", "name_ko": "스토리지", "name_en": "Storage", "count": 3},
-                {"domain_code": "SNOW-SECURITY", "name_ko": "보안", "name_en": "Security", "count": 2},
+                {"domain_code": "SNOW-STORAGE", "name_ko": "스토리지", "name_en": "Storage", "total_count": 4, "excluded_count": 1, "available_count": 3},
+                {"domain_code": "SNOW-SECURITY", "name_ko": "보안", "name_en": "Security", "total_count": 2, "excluded_count": 0, "available_count": 2},
             ]
 
             readiness = client.get(
@@ -124,6 +130,12 @@ def test_problem_management_and_mock_exams_follow_the_selected_certification() -
                 "/api/v1/mock-exams", json={"certification_code": "SNOW-CORE", "seed": 7}
             )
             assert created.status_code == 201
+            study = client.post(
+                "/api/v1/study/sessions",
+                json={"certification_code": "SNOW-CORE", "mode": "random", "question_count": 5, "seed": 7},
+            )
+            assert study.status_code == 201
+            assert excluded_question.id not in study.json()["question_ids"]
             assert client.get(
                 "/api/v1/admin/mock-exam-readiness",
                 params={"certification_code": "MISSING"},

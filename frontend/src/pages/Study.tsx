@@ -293,14 +293,14 @@ function QuestionView({ question, sessionId, session, onNext, onComplete, onAnsw
   </>;
 }
 
-function ExplanationCard({ explanation, question, selected, correctAnswers }: {
+export function ExplanationCard({ explanation, question, selected, correctAnswers }: {
   explanation: Explanation;
   question: Question;
   selected: string[];
   correctAnswers: string[];
 }) {
   return <section className="ai-explanation" aria-labelledby="ai-explanation-title">
-    <header><div><span>AI GENERATED</span><h3 id="ai-explanation-title">AI 해설</h3></div>{explanation.keywords_json.length > 0 && <div className="explanation-keywords">{explanation.keywords_json.map(keyword => <em key={keyword}>{keyword}</em>)}</div>}</header>
+    <header><div><span>AI GENERATED</span><h3 id="ai-explanation-title">AI 해설</h3></div></header>
     <div className="explanation-summary"><strong>핵심 해설</strong><p>{explanation.core_reason}</p><small>{explanation.correct_answer_summary}</small></div>
     <div className="choice-analysis"><h4>선택지별 설명</h4>{question.choices.map(choice => <article key={choice.id} className={correctAnswers.includes(choice.id) ? 'answer-correct' : selected.includes(choice.id) ? 'answer-selected' : ''}>
       <b>{choice.id}</b><div><span>{correctAnswers.includes(choice.id) ? '정답' : selected.includes(choice.id) ? '내가 고른 오답' : '다른 선택지'}</span><p>{explanation.choice_analysis_json[choice.id] ?? '이 선택지에 대한 해설이 없습니다.'}</p></div>

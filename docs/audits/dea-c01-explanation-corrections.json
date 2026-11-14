@@ -1,0 +1,42 @@
+{
+  "changes": [
+    {
+      "source_question_no": 3,
+      "existing_verified_answers": ["C"],
+      "verified_answers": ["C"],
+      "reason": "정답 C는 유지합니다. 기존 해설에 포함된 Firehose에서 DynamoDB로의 직접 적재 설명은 지원되는 경로가 아니므로, Kinesis Data Streams 소비자 애플리케이션 또는 Lambda가 DynamoDB에 기록하는 흐름으로 교정했습니다.",
+      "explanation": {
+        "correct_answer_summary": "정답 C. Amazon Kinesis Data Streams의 소비자 애플리케이션이 데이터를 Amazon DynamoDB에 기록합니다.",
+        "core_reason": "Kinesis Data Streams는 거의 실시간 스트림 수집에 적합하고, 소비자 애플리케이션 또는 Lambda가 DynamoDB에 중첩 JSON 형태의 데이터를 기록할 수 있습니다. DynamoDB는 매우 낮은 지연 시간의 키 기반 조회를 지원합니다.",
+        "choice_analysis": {
+          "A": "자체 관리 Kafka 클러스터는 운영 부담이 크고, S3는 10밀리초 미만의 저지연 조회 저장소가 아닙니다.",
+          "B": "Lambda와 S3 조합은 가능하지만, S3는 요구된 저지연 조회 저장소에 적합하지 않습니다.",
+          "C": "Kinesis Data Streams에서 수집한 데이터를 소비자 애플리케이션 또는 Lambda가 DynamoDB에 기록하면 실시간 수집과 저지연 JSON 조회 요구를 충족합니다.",
+          "D": "SQS와 Glue·RDS 조합은 스트림 수집 및 10밀리초 미만 조회 요구에 비해 과도하고 지연이 큽니다."
+        },
+        "related_concepts": "Kinesis Data Streams, Kinesis consumer, AWS Lambda, DynamoDB, 저지연 키 기반 조회",
+        "exam_traps": "Kinesis Data Streams의 소비자 경로와 Firehose의 지원 대상은 구분해야 합니다. Firehose가 DynamoDB로 직접 적재하는 경로를 전제로 하면 안 됩니다.",
+        "memory_summary": "실시간 수집은 Kinesis Data Streams, 저지연 JSON 조회는 소비자 경유 DynamoDB."
+      }
+    },
+    {
+      "source_question_no": 11,
+      "existing_verified_answers": ["B"],
+      "verified_answers": ["B"],
+      "reason": "정답 B는 유지합니다. Lambda Layer의 새 버전은 연결된 함수에 자동 반영되지 않으므로, 각 함수 설정이 새 Layer ARN 또는 버전을 참조하도록 갱신해야 한다는 점을 해설에 반영했습니다.",
+      "explanation": {
+        "correct_answer_summary": "정답 B. 공통 Python 스크립트를 Lambda Layer로 패키징하고 각 Lambda 함수에 연결합니다.",
+        "core_reason": "Lambda Layer는 공통 코드와 라이브러리를 함수 코드에서 분리해 재사용하게 합니다. 새 Layer 버전을 만들면 각 함수의 Layer ARN 또는 버전 참조를 새 버전으로 갱신해야 하며, 자동으로 반영되지는 않습니다.",
+        "choice_analysis": {
+          "A": "S3 객체는 스크립트 배포와 버전 참조를 함수별로 일관되게 관리하는 Lambda Layer의 대안이 아닙니다.",
+          "B": "공통 스크립트를 Layer로 분리해 여러 함수가 재사용할 수 있습니다. 새 Layer 버전 배포 후에는 각 함수 설정에서 새 버전을 참조하도록 갱신해야 합니다.",
+          "C": "환경 변수는 구성값 전달용이며 공통 Python 코드 배포·버전 관리를 해결하지 않습니다.",
+          "D": "Lambda 별칭은 함수 버전 라우팅용이며 여러 함수의 공통 스크립트를 관리하지 않습니다."
+        },
+        "related_concepts": "AWS Lambda Layer, Layer version, Layer ARN, 함수 구성 갱신",
+        "exam_traps": "Layer 버전은 불변이며 새 버전을 배포해도 기존 함수가 자동으로 최신 버전으로 전환되지 않습니다.",
+        "memory_summary": "공통 Lambda 코드 재사용은 Layer, 새 버전 반영은 함수의 Layer ARN 갱신."
+      }
+    }
+  ]
+}

@@ -124,6 +124,30 @@ class QuestionExplanation(Base, TimestampMixin):
     token_output: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class QuestionReviewAudit(Base, TimestampMixin):
+    """Administrator-only record explaining an audit decision for a question."""
+
+    __tablename__ = table_name("question_review_audits")
+    __table_args__ = (
+        UniqueConstraint("question_id", "audit_batch"),
+        Index("ix_question_review_audit_status", "audit_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{table_name('questions')}.id"), index=True
+    )
+    audit_batch: Mapped[str] = mapped_column(String(64), index=True)
+    disposition: Mapped[str] = mapped_column(String(32))
+    audit_status: Mapped[str] = mapped_column(String(32))
+    issue_summary: Mapped[str] = mapped_column(Text)
+    correction_summary: Mapped[str] = mapped_column(Text)
+    source_pdf_page: Mapped[int | None] = mapped_column(Integer)
+    sources_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    proposed_answers: Mapped[list[str]] = mapped_column(JSON, default=list)
+    content_fingerprint: Mapped[str] = mapped_column(String(64))
+
+
 class StudySessionRecord(Base):
     __tablename__ = table_name("study_sessions")
     session_id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -133,6 +157,7 @@ class StudySessionRecord(Base):
     status: Mapped[str] = mapped_column(String(32), default="in_progress", index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    wrong_note_hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     retry_of_session_id: Mapped[str | None] = mapped_column(String(36), index=True)
     pending_question_id: Mapped[int | None] = mapped_column(ForeignKey(f"{table_name('questions')}.id"), index=True)
     pending_selected_answers_json: Mapped[list[str] | None] = mapped_column(JSON)

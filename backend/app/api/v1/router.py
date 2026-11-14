@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.v1.auth import (
@@ -34,6 +34,7 @@ from app.models.entities import (
     QuestionChoice,
     QuestionExplanation,
     QuestionReport,
+    QuestionReviewAudit,
     StudyAttempt,
     StudySessionRecord,
     User,
@@ -48,8 +49,6 @@ from app.services.scoring import percentage, scaled_score, score_answer
 router = APIRouter(dependencies=[Depends(maintenance_current_user)])
 Db = Annotated[Session, Depends(get_db)]
 CurrentUser = Annotated[User | None, Depends(current_user)]
-
-
 def owner_id(user: User | None) -> int:
     return user.id if user is not None else 0
 
@@ -279,14 +278,24 @@ def leave_study(session_id: str, payload: StudyLeaveRequest, db: Db, user: Curre
 @router.get("/study/history", response_model=list[StudyHistoryOut])
 def study_history(db: Db, user: CurrentUser) -> list[StudyHistoryOut]:
     rows = db.execute(
-        select(StudyAttempt, Question, Certification)
+        select(StudyAttempt, Question, Certification, QuestionExplanation)
         .join(Question, Question.id == StudyAttempt.question_id)
         .join(Certification, Certification.id == Question.certification_id)
-        .where(StudyAttempt.user_id == owner_id(user), StudyAttempt.wrong_note_processed.is_(True))
+        .join(StudySessionRecord, StudySessionRecord.session_id == StudyAttempt.session_id)
+        .outerjoin(QuestionExplanation, and_(
+            QuestionExplanation.question_id == Question.id,
+            QuestionExplanation.language == "ko",
+            QuestionExplanation.generation_status == "complete",
+        ))
+        .where(
+            StudyAttempt.user_id == owner_id(user),
+            StudyAttempt.wrong_note_processed.is_(True),
+            StudySessionRecord.wrong_note_hidden_at.is_(None),
+        )
         .order_by(StudyAttempt.attempted_at.desc(), StudyAttempt.id.desc())
     ).all()
     grouped: dict[str, dict[str, Any]] = {}
-    for attempt, question, certification in rows:
+    for attempt, question, certification, explanation in rows:
         group = grouped.setdefault(attempt.session_id, {
             "session_id": attempt.session_id,
             "certification_code": certification.certification_code,
@@ -306,12 +315,16 @@ def study_history(db: Db, user: CurrentUser) -> list[StudyHistoryOut]:
                 "id": question.id,
                 "question_uid": question.question_uid,
                 "question_ko": question.question_ko,
+                "related_concepts": explanation.related_concepts if explanation else "",
             })
     return [StudyHistoryOut(**group) for group in grouped.values()]
 
 
 @router.post("/study/history/{session_id}/retry", response_model=StudySessionOut, status_code=201)
 def retry_study_history(session_id: str, db: Db, user: CurrentUser) -> StudySessionOut:
+    record = db.get(StudySessionRecord, session_id)
+    if not record or record.user_id != owner_id(user) or record.wrong_note_hidden_at is not None:
+        raise HTTPException(404, "Completed study session not found")
     question_ids = list(db.scalars(
         select(StudyAttempt.question_id)
         .where(
@@ -328,6 +341,35 @@ def retry_study_history(session_id: str, db: Db, user: CurrentUser) -> StudySess
     first_question = db.get(Question, question_ids[0]); retry_session_id = str(uuid4())
     db.add(StudySessionRecord(session_id=retry_session_id, user_id=owner_id(user), certification_id=first_question.certification_id, question_ids_json=question_ids, retry_of_session_id=session_id)); db.commit()
     return StudySessionOut(id=retry_session_id, question_ids=question_ids, retry_of_session_id=session_id)
+
+
+@router.get("/study/history/{session_id}/questions/{question_id}", response_model=StudyHistoryQuestionDetailOut)
+def study_history_question_detail(session_id: str, question_id: int, db: Db, user: CurrentUser) -> dict[str, Any]:
+    record = db.get(StudySessionRecord, session_id)
+    if not record or record.user_id != owner_id(user) or record.wrong_note_hidden_at is not None:
+        raise HTTPException(404, "Completed study session not found")
+    attempt = db.scalar(select(StudyAttempt).where(
+        StudyAttempt.session_id == session_id,
+        StudyAttempt.user_id == owner_id(user),
+        StudyAttempt.question_id == question_id,
+        StudyAttempt.wrong_note_processed.is_(True),
+        StudyAttempt.is_correct.is_(False),
+    ))
+    if attempt is None:
+        raise HTTPException(404, "Wrong answer not found in this study session")
+    question = get_question(db, question_id)
+    explanation = db.scalar(select(QuestionExplanation).where(
+        QuestionExplanation.question_id == question_id,
+        QuestionExplanation.language == "ko",
+        QuestionExplanation.generation_status == "complete",
+    ))
+    return {
+        "question": QuestionOut.model_validate(question),
+        "selected_answers": attempt.selected_answers_json,
+        "correct_answers": current_answers(question),
+        "related_concepts": explanation.related_concepts if explanation else "",
+        "explanation": explanation,
+    }
 
 
 def rebuild_wrong_note(db: Session, user_id: int, question_id: int) -> None:
@@ -359,6 +401,9 @@ def rebuild_wrong_note(db: Session, user_id: int, question_id: int) -> None:
 
 @router.delete("/study/history/{session_id}")
 def delete_study_history(session_id: str, db: Db, user: CurrentUser) -> dict[str, int]:
+    record = db.get(StudySessionRecord, session_id)
+    if not record or record.user_id != owner_id(user) or record.wrong_note_hidden_at is not None:
+        raise HTTPException(404, "Completed study session not found")
     attempts = list(db.scalars(
         select(StudyAttempt).where(
             StudyAttempt.session_id == session_id,
@@ -368,23 +413,7 @@ def delete_study_history(session_id: str, db: Db, user: CurrentUser) -> dict[str
     ))
     if not attempts:
         raise HTTPException(404, "Completed study session not found")
-    retry_ids = list(db.scalars(select(StudySessionRecord.session_id).where(
-        StudySessionRecord.retry_of_session_id == session_id,
-        StudySessionRecord.user_id == owner_id(user),
-    )))
-    for retry_attempt in db.scalars(select(StudyAttempt).where(StudyAttempt.session_id.in_(retry_ids)) if retry_ids else select(StudyAttempt).where(False)):
-        db.delete(retry_attempt)
-    for retry_id in retry_ids:
-        retry_record = db.get(StudySessionRecord, retry_id)
-        if retry_record: db.delete(retry_record)
-    question_ids = {attempt.question_id for attempt in attempts}
-    for attempt in attempts:
-        db.delete(attempt)
-    db.flush()
-    for question_id in question_ids:
-        rebuild_wrong_note(db, owner_id(user), question_id)
-    record = db.get(StudySessionRecord, session_id)
-    if record and record.user_id == owner_id(user): db.delete(record)
+    record.wrong_note_hidden_at = utcnow()
     db.commit()
     return {"deleted_count": len(attempts)}
 
@@ -840,6 +869,23 @@ def get_classification_report(
         Domain.is_active.is_(True),
         Domain.exam_weight > 0,
     ).order_by(Domain.sort_order)))
+    total_counts = dict(db.execute(
+        select(Question.domain_id, func.count(Question.id))
+        .where(Question.certification_id == certification.id, Question.is_active.is_(True))
+        .group_by(Question.domain_id)
+    ).all())
+    excluded_counts = dict(db.execute(
+        select(Question.domain_id, func.count(Question.id))
+        .where(
+            Question.certification_id == certification.id,
+            Question.is_active.is_(True),
+            Question.verification_status == "needs_review",
+        )
+        .group_by(Question.domain_id)
+    ).all())
+    available_counts: dict[int, int] = {}
+    for question in ExamRepository(db).eligible_questions(certification.id):
+        available_counts[question.domain_id] = available_counts.get(question.domain_id, 0) + 1
     return {
         **summary,
         "certification_name": certification.name_ko or certification.name_en,
@@ -847,7 +893,9 @@ def get_classification_report(
             "domain_code": domain.domain_code,
             "name_ko": domain.name_ko,
             "name_en": domain.name_en,
-            "count": summary["domain_counts"].get(domain.domain_code, 0),
+            "total_count": total_counts.get(domain.id, 0),
+            "excluded_count": excluded_counts.get(domain.id, 0),
+            "available_count": available_counts.get(domain.id, 0),
         } for domain in domains],
     }
 
@@ -882,6 +930,81 @@ def admin_questions(db: Db, page: int = Query(1, ge=1), page_size: int = Query(5
     for condition in [Question.certification_id == certification_id if certification_id else None, Question.verification_status == verification_status if verification_status else None]:
         if condition is not None: stmt = stmt.where(condition); count_stmt = count_stmt.where(condition)
     return {"items": list(db.scalars(stmt.offset((page-1)*page_size).limit(page_size))), "total": db.scalar(count_stmt) or 0}
+
+
+@admin.get("/question-reviews")
+def admin_question_reviews(
+    db: Db,
+    certification_code: str = Query(..., min_length=1, max_length=64),
+    domain_code: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=3)] = 3,
+) -> dict[str, Any]:
+    """List quarantined and corrected audit questions for one certification domain."""
+    conditions = [
+        Certification.certification_code == certification_code,
+    ]
+    if domain_code:
+        conditions.append(Domain.domain_code == domain_code)
+    statement = (
+        select(QuestionReviewAudit, Question, Domain)
+        .join(Question, Question.id == QuestionReviewAudit.question_id)
+        .join(Domain, Domain.id == Question.domain_id)
+        .join(Certification, Certification.id == Question.certification_id)
+        .where(*conditions)
+        .order_by(Domain.sort_order, Question.id)
+    )
+    total = db.scalar(select(func.count()).select_from(statement.subquery())) or 0
+    rows = list(db.execute(statement.offset((page - 1) * page_size).limit(page_size)))
+    return {
+        "items": [{
+            "question_id": question.id,
+            "question_uid": question.question_uid,
+            "domain_code": domain.domain_code,
+            "domain_name": domain.name_ko or domain.name_en,
+            "verification_status": question.verification_status,
+            "disposition": audit.disposition,
+            "audit_status": audit.audit_status,
+            "issue_summary": audit.issue_summary,
+            "correction_summary": audit.correction_summary,
+            "source_pdf_page": audit.source_pdf_page,
+            "sources": audit.sources_json,
+            "proposed_answers": audit.proposed_answers,
+        } for audit, question, domain in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@admin.get("/question-reviews/{question_id}")
+def admin_question_review_detail(
+    question_id: int, db: Db, certification_code: str = Query(..., min_length=1, max_length=64)
+) -> dict[str, Any]:
+    """Return a full audited question and its correction record for administrator review."""
+    row = db.execute(
+        select(QuestionReviewAudit, Question, Domain)
+        .join(Question, Question.id == QuestionReviewAudit.question_id)
+        .join(Domain, Domain.id == Question.domain_id)
+        .join(Certification, Certification.id == Question.certification_id)
+        .where(
+            QuestionReviewAudit.question_id == question_id,
+            Certification.certification_code == certification_code,
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(404, "Question review not found")
+    audit, question, domain = row
+    return {
+        "question": QuestionOut.model_validate(get_question(db, question.id)),
+        "domain_code": domain.domain_code,
+        "domain_name": domain.name_ko or domain.name_en,
+        "issue_summary": audit.issue_summary,
+        "correction_summary": audit.correction_summary,
+        "source_pdf_page": audit.source_pdf_page,
+        "sources": audit.sources_json,
+        "proposed_answers": audit.proposed_answers,
+    }
 
 
 @admin.get("/questions/{question_id}", response_model=QuestionOut)

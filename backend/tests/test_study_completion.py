@@ -17,6 +17,7 @@ from app.models.entities import (
     QuestionChoice,
     StudyAttempt,
     StudySessionRecord,
+    QuestionExplanation,
     WrongNote,
 )
 
@@ -79,6 +80,13 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
         db.commit()
         question_ids = [question.id for question in questions]
         certification_id = certification.id
+        db.add(QuestionExplanation(
+            question_id=question_ids[0], language="ko",
+            correct_answer_summary="A가 검증된 정답입니다.", core_reason="요구사항을 충족합니다.",
+            keywords_json=["핵심 개념"], choice_analysis_json={"A": "정답", "B": "다른 기능"},
+            related_concepts="핵심 개념", exam_traps="조건을 구분하세요.", memory_summary="핵심을 기억하세요.",
+            generation_status="complete",
+        ))
         db.add(StudySessionRecord(session_id="batch-session", user_id=0, certification_id=certification_id, question_ids_json=question_ids))
         db.commit()
 
@@ -128,6 +136,14 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
             assert batch["session_id"] == "batch-session"
             assert (batch["total_count"], batch["correct_count"], batch["wrong_count"]) == (2, 1, 1)
             assert [question["id"] for question in batch["wrong_questions"]] == [question_ids[0]]
+            assert batch["wrong_questions"][0]["related_concepts"] == "핵심 개념"
+
+            detail = client.get(f"/api/v1/study/history/batch-session/questions/{question_ids[0]}")
+            assert detail.status_code == 200
+            assert detail.json()["selected_answers"] == ["B"]
+            assert detail.json()["correct_answers"] == ["A"]
+            assert detail.json()["related_concepts"] == "핵심 개념"
+            assert detail.json()["explanation"]["core_reason"] == "요구사항을 충족합니다."
 
             retry = client.post("/api/v1/study/history/batch-session/retry")
             assert retry.status_code == 201
@@ -178,6 +194,7 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
             assert deleted.json() == {"deleted_count": 2}
             assert client.get("/api/v1/study/history").json() == []
             assert client.delete("/api/v1/study/history/batch-session").status_code == 404
+            assert client.post("/api/v1/study/history/batch-session/retry").status_code == 404
 
             with session_factory() as db:
                 db.add(StudySessionRecord(session_id="partial-session", user_id=0, certification_id=certification_id, question_ids_json=question_ids))
@@ -203,8 +220,15 @@ def test_wrong_notes_are_written_once_when_study_is_completed() -> None:
 
     with session_factory() as db:
         note = db.scalar(select(WrongNote))
-        assert note is None
+        assert note is not None
         attempts = list(db.scalars(select(StudyAttempt)))
-        assert len(attempts) == 1
-        assert attempts[0].session_id == "discarded-session"
-        assert attempts[0].wrong_note_processed is False
+        assert {attempt.session_id for attempt in attempts} == {
+            "batch-session", "partial-session", "discarded-session",
+            retry_session_id, retry_again_session_id,
+        }
+        hidden_sessions = list(db.scalars(select(StudySessionRecord).where(
+            StudySessionRecord.wrong_note_hidden_at.is_not(None)
+        )))
+        assert {record.session_id for record in hidden_sessions} == {"batch-session", "partial-session"}
+        discarded_attempt = next(attempt for attempt in attempts if attempt.session_id == "discarded-session")
+        assert discarded_attempt.wrong_note_processed is False

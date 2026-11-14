@@ -53,7 +53,7 @@ def test_pattern_analysis_requires_ten_completed_answers_and_uses_wrong_choice_p
                 session_id = f"{'retry' if retry else 'study'}-{number}"
                 completed_at = utcnow() + timedelta(minutes=number + 1) if future else utcnow() - timedelta(minutes=number + 1)
                 db.add(StudySessionRecord(session_id=session_id, user_id=0, certification_id=certification_id, question_ids_json=question_ids, status="completed", completed_at=completed_at, retry_of_session_id="original" if retry else None))
-                db.add_all([StudyAttempt(user_id=0, session_id=session_id, question_id=question_id, selected_answers_json=["B"], is_correct=False) for question_id in question_ids])
+                db.add_all([StudyAttempt(user_id=0, session_id=session_id, question_id=question_id, selected_answers_json=["B"], is_correct=False, wrong_note_processed=True) for question_id in question_ids])
             db.commit()
 
     def override_db() -> Iterator[Session]:
@@ -83,6 +83,10 @@ def test_pattern_analysis_requires_ten_completed_answers_and_uses_wrong_choice_p
             assert generated.json()["can_generate"] is True
             refreshed = client.get("/api/v1/wrong-notes/ai-concept-summary/DEA-C01")
             assert refreshed.json()["answer_count"] == 10
+            deleted = client.delete("/api/v1/study/history/study-0")
+            assert deleted.status_code == 200
+            assert client.get("/api/v1/study/history").json() == []
+            assert client.get("/api/v1/wrong-notes/ai-concept-summary/DEA-C01").json()["answer_count"] == 10
             assert client.post("/api/v1/wrong-notes/ai-concept-summary/DEA-C01").status_code == 200
     finally:
         app.dependency_overrides.clear()

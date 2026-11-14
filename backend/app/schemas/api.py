@@ -203,6 +203,7 @@ class StudyHistoryQuestion(BaseModel):
     id: int
     question_uid: str
     question_ko: str
+    related_concepts: str = ""
 
 
 class StudyHistoryOut(BaseModel):
@@ -317,6 +318,14 @@ class ExplanationOut(ORMModel):
     related_concepts: str
     exam_traps: str
     memory_summary: str
+
+
+class StudyHistoryQuestionDetailOut(BaseModel):
+    question: QuestionOut
+    selected_answers: list[str]
+    correct_answers: list[str]
+    related_concepts: str
+    explanation: ExplanationOut | None = None
 
 
 class ExplanationGenerate(BaseModel):

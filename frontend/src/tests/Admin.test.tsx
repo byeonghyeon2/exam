@@ -17,6 +17,12 @@ function mockAdminData() {
     {code:'DEA-C01',name_ko:'AWS 데이터 엔지니어',name_en:'AWS Data Engineer',exam_version:'DEA-C01',default_question_count:65,default_duration_minutes:130,passing_score:720},
     {code:'SNOW-CORE',name_ko:'스노우프로 코어',name_en:'SnowPro Core',exam_version:'SNOW-CORE',default_question_count:5,default_duration_minutes:115,passing_score:750},
   ]);
+  vi.spyOn(endpoints, 'domains').mockResolvedValue([
+    {id:1,domain_code:'DEA-D1',name_ko:'수집 및 변환',name_en:'Ingestion',exam_weight:34},
+    {id:2,domain_code:'DEA-D2',name_ko:'데이터 저장소',name_en:'Storage',exam_weight:26},
+    {id:3,domain_code:'DEA-D3',name_ko:'운영 및 지원',name_en:'Operations',exam_weight:22},
+    {id:4,domain_code:'DEA-D4',name_ko:'보안 및 거버넌스',name_en:'Security',exam_weight:18},
+  ]);
   vi.spyOn(endpoints, 'adminDashboard').mockResolvedValue({ questions: 295, verified: 295 });
   vi.spyOn(endpoints, 'users').mockResolvedValue([{
     id: 1, username: 'user', role: 'user', is_active: true,
@@ -30,6 +36,15 @@ function mockAdminData() {
     description: '해설에 오타 존재', status: 'received', resolution_note: null,
     created_at: '2026-08-12T00:14:22Z', resolved_at: null,
   }]);
+  vi.spyOn(endpoints, 'questionReviews').mockResolvedValue({items:[{
+    question_id:149,question_uid:'AWS-DEA-C01-000149',domain_code:'DEA-D1',domain_name:'수집 및 변환',verification_status:'needs_review',disposition:'quarantined',audit_status:'HOLD_REVIEW',issue_summary:'문항 조건이 부족합니다.',correction_summary:'조건을 보완한 뒤 다시 검증합니다.',source_pdf_page:12,sources:['AWS 공식 문서'],proposed_answers:['B'],
+  },{
+    question_id:150,question_uid:'AWS-DEA-C01-000150',domain_code:'DEA-D1',domain_name:'수집 및 변환',verification_status:'verified',disposition:'corrected',audit_status:'APPLIED',issue_summary:'해설의 표현을 교정했습니다.',correction_summary:'정답 B는 유지하고 AI 해설을 교정했습니다.',source_pdf_page:13,sources:['AWS 공식 문서'],proposed_answers:['B'],
+  }],total:2,page:1,page_size:3});
+  vi.spyOn(endpoints, 'questionReviewDetail').mockResolvedValue({
+    question:{id:149,question_uid:'AWS-DEA-C01-000149',question_type:'multiple_choice',question_ko:'검토 대상 문제',question_en:'Question under review',required_answer_count:1,choices:[{id:'A',text_ko:'보기 A',text_en:'Choice A'},{id:'B',text_ko:'보기 B',text_en:'Choice B'}]},
+    domain_code:'DEA-D1',domain_name:'수집 및 변환',issue_summary:'문항 조건이 부족합니다.',correction_summary:'조건을 보완한 뒤 다시 검증합니다.',source_pdf_page:12,sources:['AWS 공식 문서'],proposed_answers:['B'],
+  });
   vi.spyOn(endpoints, 'mockReadiness').mockResolvedValue({
     certification_code:'DEA-C01',certification_name:'AWS 데이터 엔지니어',ready: true, question_count: 65,
     domains: [
@@ -42,10 +57,10 @@ function mockAdminData() {
   vi.spyOn(endpoints, 'classificationReport').mockResolvedValue({
     certification: 'DEA-C01',certification_name:'AWS 데이터 엔지니어',domain_counts: { 'DEA-D1': 106, 'DEA-D2': 76, 'DEA-D3': 64, 'DEA-D4': 49 }, status_counts: {},
     domains:[
-      {domain_code:'DEA-D1',name_ko:'수집 및 변환',name_en:'Ingestion',count:106},
-      {domain_code:'DEA-D2',name_ko:'데이터 저장소',name_en:'Storage',count:76},
-      {domain_code:'DEA-D3',name_ko:'운영 및 지원',name_en:'Operations',count:64},
-      {domain_code:'DEA-D4',name_ko:'보안 및 거버넌스',name_en:'Security',count:49},
+      {domain_code:'DEA-D1',name_ko:'수집 및 변환',name_en:'Ingestion',total_count:106,excluded_count:1,available_count:105},
+      {domain_code:'DEA-D2',name_ko:'데이터 저장소',name_en:'Storage',total_count:76,excluded_count:0,available_count:76},
+      {domain_code:'DEA-D3',name_ko:'운영 및 지원',name_en:'Operations',total_count:64,excluded_count:0,available_count:64},
+      {domain_code:'DEA-D4',name_ko:'보안 및 거버넌스',name_en:'Security',total_count:49,excluded_count:0,available_count:49},
     ],
   });
 }
@@ -75,6 +90,7 @@ describe('Admin mobile layout', () => {
     cleanup();
     renderAdmin(AdminQuestions);
     await waitFor(()=>expect(screen.getByLabelText('관리할 자격증')).toHaveValue('DEA-C01'));
+    expect(within(screen.getByLabelText('관리할 자격증')).getByRole('option',{name:'AWS · DEA-C01'})).toBeInTheDocument();
     expect(screen.queryByText('DEA-UNCLASSIFIED')).not.toBeInTheDocument();
     expect(screen.queryByText(/미분류 활성 문제/)).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: '상태/신뢰도' })).not.toBeInTheDocument();
@@ -83,6 +99,15 @@ describe('Admin mobile layout', () => {
     expect(reports.getByRole('columnheader', { name: '접수 시각' })).toHaveClass('report-time');
     expect(reports.getByRole('columnheader', { name: '유형' })).toHaveClass('report-type');
     expect(reports.queryByRole('columnheader', { name: '상태' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', {name:'검토 및 교정 이력'})).toBeInTheDocument();
+    expect(screen.getByText('교정 완료')).toBeInTheDocument();
+    expect(screen.getByRole('tab',{name:/수집 및 변환/})).toHaveAttribute('aria-selected','true');
+    await userEvent.click(await screen.findByRole('button',{name:/AWS-DEA-C01-000149/}));
+    expect(await screen.findByRole('dialog',{name:'AWS-DEA-C01-000149'})).toHaveTextContent('보기 A');
+    expect(screen.getByRole('dialog',{name:'AWS-DEA-C01-000149'})).toHaveTextContent('조건을 보완한 뒤 다시 검증합니다.');
+    await userEvent.click(await screen.findByRole('button',{name:/AWS-DEA-C01-000150/}));
+    expect(await screen.findByRole('dialog',{name:'AWS-DEA-C01-000150'})).toHaveTextContent('교정 완료 문항');
+    expect(screen.getByRole('dialog',{name:'AWS-DEA-C01-000150'})).toHaveTextContent('적용한 교정');
   });
 
   it('loads problem counts, reports, and readiness for a newly added certification',async()=>{
@@ -90,8 +115,8 @@ describe('Admin mobile layout', () => {
     vi.mocked(endpoints.classificationReport).mockImplementation(async code=>code==='SNOW-CORE'?{
       certification:'SNOW-CORE',certification_name:'스노우프로 코어',domain_counts:{'SNOW-STORAGE':3,'SNOW-SECURITY':2},status_counts:{},
       domains:[
-        {domain_code:'SNOW-STORAGE',name_ko:'스토리지',name_en:'Storage',count:3},
-        {domain_code:'SNOW-SECURITY',name_ko:'보안',name_en:'Security',count:2},
+        {domain_code:'SNOW-STORAGE',name_ko:'스토리지',name_en:'Storage',total_count:3,excluded_count:0,available_count:3},
+        {domain_code:'SNOW-SECURITY',name_ko:'보안',name_en:'Security',total_count:2,excluded_count:0,available_count:2},
       ],
     }:{certification:'DEA-C01',certification_name:'AWS 데이터 엔지니어',domain_counts:{} as Record<string,number>,status_counts:{},domains:[]});
     vi.mocked(endpoints.mockReadiness).mockImplementation(async code=>({
@@ -103,7 +128,7 @@ describe('Admin mobile layout', () => {
     }]:[]);
     renderAdmin(AdminQuestions);
     const selector=await screen.findByLabelText('관리할 자격증');
-    await waitFor(()=>expect(within(selector).getByRole('option',{name:/스노우프로 코어/})).toBeInTheDocument());
+    await waitFor(()=>expect(within(selector).getByRole('option',{name:'SnowPro · SNOW-CORE'})).toBeInTheDocument());
     await userEvent.selectOptions(selector,'SNOW-CORE');
     expect((await screen.findAllByText('스토리지')).length).toBeGreaterThan(0);
     expect(screen.getByText('Snow 신고')).toBeInTheDocument();
